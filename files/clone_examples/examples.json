@@ -1,0 +1,22 @@
+[
+  {
+    "segmento": "ref_Conversational",
+    "transcripcion": "So let's see now what is the importance of the areas marked with the volume profile.",
+    "tono": "Conversational"
+  },
+  {
+    "segmento": "ref_Explanatory",
+    "transcripcion": "Let's see the areas that we can obtain with the volume profile: the high value area, the low va...",
+    "tono": "Explanatory"
+  },
+  {
+    "segmento": "ref_Effusive",
+    "transcripcion": "...OC! But with the POC we can have high volume levels or high...",
+    "tono": "Effusive"
+  },
+  {
+    "segmento": "ref_Serious",
+    "transcripcion": "we are going to see that we have a consolidation here. and it presents us with a pattern of low acceptance.",
+    "tono": "Serious"
+  }
+]

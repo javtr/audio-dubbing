@@ -1,0 +1,55 @@
+# ==========================================
+# Entornos Virtuales y Dependencias
+# ==========================================
+venv/
+.venv/
+env/
+Lib/
+Include/
+Scripts/
+
+# ==========================================
+# Caché de Python
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ==========================================
+# Archivos de Audio y Multimedia pesados
+# ==========================================
+*.mp3
+*.wav
+*.m4a
+*.flac
+*.ogg
+*.dll
+
+# ==========================================
+# Datos del Proyecto (Archivos dinámicos)
+# ==========================================
+# Ignoramos el contenido de estas carpetas porque son dinámicos
+# Si quieres mantener las carpetas vacías en git, añade un archivo '.gitkeep' dentro de ellas.
+files/original/*
+!files/original/.gitkeep
+
+files/audios/*
+!files/audios/.gitkeep
+
+# Mantenemos examples.json pero ignoramos los audios de referencia si son pesados
+files/clone_examples/*.wav
+
+# Ignoramos el JSON generado automáticamente por la app
+files/original/secciones.json
+metadata.json
+
+# ==========================================
+# Configuraciones de Entorno e IDEs
+# ==========================================
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Variables de entorno (Aunque definimos no usarlas, es la regla de oro de la seguridad)
+.env
