@@ -46,12 +46,13 @@ class AudioEngine:
 
 class SegmentCard(ctk.CTkFrame):
     """Tarjeta individual para cada segmento de audio."""
-    def __init__(self, master, segment_data, original_audio_path, save_callback, delete_callback, **kwargs):
+    def __init__(self, master, segment_data, original_audio_path, save_callback, delete_callback, request_callback, **kwargs):
         super().__init__(master, **kwargs)
         self.data = segment_data
         self.original_audio_path = original_audio_path
         self.save_callback = save_callback
         self.delete_callback = delete_callback
+        self.request_callback = request_callback
         
         self.configure(fg_color="#2b2b2b", border_width=1, border_color="#3d3d3d")
         
@@ -108,9 +109,19 @@ class SegmentCard(ctk.CTkFrame):
                                       command=self._save_local_changes)
         self.btn_save.pack(side="left", padx=5)
 
+        self.btn_request = ctk.CTkButton(btn_frame, text="✨ Generar este", width=120, fg_color="#7b1fa2", hover_color="#4a148c",
+                                         command=lambda: self.request_callback(self.data))
+        self.btn_request.pack(side="left", padx=5)
+
+        self.btn_play_gen = ctk.CTkButton(btn_frame, text="🎧 Oír Generado", width=120, fg_color="#607d8b", hover_color="#455a64",
+                                          command=self._play_generated)
+        self.btn_play_gen.pack(side="left", padx=5)
+
         self.btn_delete = ctk.CTkButton(btn_frame, text="🗑 Eliminar", width=100, fg_color="#a83232", hover_color="#822727",
                                         command=lambda: self.delete_callback(self.data))
         self.btn_delete.pack(side="right", padx=5)
+
+        self.update_generated_status()
 
     def _play_slice(self):
         try:
@@ -130,6 +141,26 @@ class SegmentCard(ctk.CTkFrame):
         if self.save_callback(self.data):
             self.configure(border_color="#28a745") # Feedback visual: verde al guardar
             self.after(1000, lambda: self.configure(border_color="#3d3d3d"))
+
+    def update_generated_status(self):
+        path = os.path.join(PATH_CONFIG["OUTPUT_AUDIO"], self.data['filename'])
+        if os.path.exists(path):
+            self.btn_play_gen.configure(state="normal", fg_color="#2e7d32")
+        else:
+            self.btn_play_gen.configure(state="disabled", fg_color="#455a64")
+
+    def _play_generated(self):
+        path = os.path.join(PATH_CONFIG["OUTPUT_AUDIO"], self.data['filename'])
+        if os.path.exists(path):
+            try:
+                # Leer archivo en memoria para evitar bloquear el archivo en disco (Windows)
+                with open(path, "rb") as f:
+                    audio_data = io.BytesIO(f.read())
+                pygame.mixer.music.load(audio_data)
+                pygame.mixer.music.play()
+                self._current_buf = audio_data # Mantener referencia para evitar GC
+            except Exception as e:
+                messagebox.showerror("Error", f"No se pudo reproducir: {e}")
 
     def set_status_processing(self):
         self.configure(border_color="#ffc107") # Amarillo
@@ -219,7 +250,7 @@ class App(ctk.CTk):
         
         self.card_widgets.clear()
         for seg in self.segments_data:
-            card = SegmentCard(self.scroll_frame, seg, self.original_audio_file, self.save_metadata_to_disk, self.delete_segment)
+            card = SegmentCard(self.scroll_frame, seg, self.original_audio_file, self.save_metadata_to_disk, self.delete_segment, self.request_single_segment)
             card.pack(fill="x", padx=5, pady=5)
             self.card_widgets[seg['id']] = card
 
@@ -249,58 +280,69 @@ class App(ctk.CTk):
         # Ejecutar en hilo separado
         threading.Thread(target=self._dubbing_worker, daemon=True).start()
 
+    def request_single_segment(self, seg_data):
+        threading.Thread(target=self._single_dubbing_worker, args=(seg_data,), daemon=True).start()
+
+    def _get_api_resources(self):
+        client = Client(PATH_CONFIG["PINOKIO_URL"])
+        with open(PATH_CONFIG["EXAMPLES_JSON"], "r", encoding="utf-8") as f:
+            examples = json.load(f)
+        tone_map = {ex['tono']: ex['transcripcion'] for ex in examples}
+        return client, tone_map
+
+    def _run_segment_generation(self, seg, client, tone_map):
+        seg_id = seg['id']
+        tone = seg.get('tone', 'Serious')
+        self.after(0, lambda: self.card_widgets[seg_id].set_status_processing())
+
+        ref_audio_path = os.path.join(PATH_CONFIG["CLONE_EXAMPLES"], f"ref_{tone}.wav")
+        ref_text = tone_map.get(tone, "Hello, this is a reference text.")
+
+        result = client.predict(
+            ref_audio=handle_file(ref_audio_path),
+            ref_text=ref_text,
+            target_text=seg['translated'],
+            language="English",
+            use_xvector_only=False,
+            model_size="1.7B",
+            max_chunk_chars=200,
+            chunk_gap=0.0,
+            seed=-1,
+            api_name="/generate_voice_clone"
+        )
+
+        # Detener el mixer y liberar archivos para evitar el error de acceso denegado en Windows
+        pygame.mixer.music.stop()
+        try:
+            pygame.mixer.music.unload()
+        except AttributeError:
+            pygame.mixer.music.load(io.BytesIO()) # Fallback para liberar el lock en versiones antiguas
+
+        temp_path = result[0]
+        final_path = os.path.join(PATH_CONFIG["OUTPUT_AUDIO"], seg['filename'])
+        shutil.move(temp_path, final_path)
+
+        self.after(0, lambda: self.card_widgets[seg_id].set_status_done())
+        self.after(0, lambda: self.card_widgets[seg_id].update_generated_status())
+
     def _dubbing_worker(self):
         self.btn_run_all.configure(state="disabled", text="Procesando...")
-        
         try:
-            client = Client(PATH_CONFIG["PINOKIO_URL"])
-            
-            # Cargar ejemplos de clonación
-            with open(PATH_CONFIG["EXAMPLES_JSON"], "r", encoding="utf-8") as f:
-                examples = json.load(f)
-            
-            # Mapear tono -> texto_referencia
-            tone_map = {ex['tono']: ex['transcripcion'] for ex in examples}
-
+            client, tone_map = self._get_api_resources()
             for seg in self.segments_data:
-                seg_id = seg['id']
-                tone = seg.get('tone', 'Serious')
-                
-                # UI feedback
-                self.after(0, lambda s=seg_id: self.card_widgets[s].set_status_processing())
-
-                ref_audio_path = os.path.join(PATH_CONFIG["CLONE_EXAMPLES"], f"ref_{tone}.wav")
-                ref_text = tone_map.get(tone, "Hello, this is a reference text.")
-
-                # Llamada API
-                result = client.predict(
-                    ref_audio=handle_file(ref_audio_path),
-                    ref_text=ref_text,
-                    target_text=seg['translated'],
-                    language="English",
-                    use_xvector_only=False,
-                    model_size="1.7B",
-                    max_chunk_chars=200,
-                    chunk_gap=0.0,
-                    seed=-1,
-                    api_name="/generate_voice_clone"
-                )
-
-                # Mover archivo
-                temp_path = result[0]
-                final_path = os.path.join(PATH_CONFIG["OUTPUT_AUDIO"], seg['filename'])
-                shutil.move(temp_path, final_path)
-
-                # UI feedback finalizado
-                self.after(0, lambda s=seg_id: self.card_widgets[s].set_status_done())
-
+                self._run_segment_generation(seg, client, tone_map)
             messagebox.showinfo("Proceso Completo", "Todos los audios han sido generados en la carpeta 'audios'.")
-        
         except Exception as e:
-            error_msg = str(e)
-            self.after(0, lambda msg=error_msg: messagebox.showerror("Error en API", f"Falló la conexión o el proceso: {msg}"))
+            self.after(0, lambda msg=str(e): messagebox.showerror("Error en API", f"Falló el proceso: {msg}"))
         finally:
             self.after(0, lambda: self.btn_run_all.configure(state="normal", text="🚀 Solicitar Audios a Pinokio"))
+
+    def _single_dubbing_worker(self, seg):
+        try:
+            client, tone_map = self._get_api_resources()
+            self._run_segment_generation(seg, client, tone_map)
+        except Exception as e:
+            self.after(0, lambda msg=str(e): messagebox.showerror("Error", f"No se pudo generar el audio: {msg}"))
 
 if __name__ == "__main__":
     app = App()
