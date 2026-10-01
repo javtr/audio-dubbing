@@ -265,6 +265,17 @@ class AudioDubbingStudio(ctk.CTk):
         self.dub_cursor = None
         self.dub_ax = None
 
+        # Variables de manipulación interactiva de segmentos (Timeline Drag & Stretch)
+        self.drag_mode = None          # "MOVE", "RESIZE" o "SEEK"
+        self.drag_segment = None       # Diccionario del segmento activo
+        self.drag_start_x = 0.0        # Posición inicial en ms al hacer clic
+        self.orig_seg_start = 0        # start_ms antes de arrastrar
+        self.orig_seg_end = 0          # end_ms antes de arrastrar
+        self.orig_clip_raw_duration = 0  # Duración del audio sin estirar
+        self.ghost_patch = None        # Patch visual de previsualización
+        self.drag_has_moved = False    # Para distinguir clic simple de arrastre
+
+
 
         self._build_top_bar()
         self._build_tabs()
@@ -922,18 +933,213 @@ class AudioDubbingStudio(ctk.CTk):
         canvas.get_tk_widget().pack(fill="both", expand=True)
         plt.close(fig)
 
-        # Guardar referencias para actualización en tiempo real
+        # Guardar referencias y conectar eventos
         if is_dubbed:
             self.dub_ax = ax
             self.dub_canvas = canvas
             self.dub_cursor = cursor
+            # Conectar eventos de manipulación de segmentos (mover, estirar/comprimir)
+            canvas.mpl_connect('button_press_event', self._on_timeline_press)
+            canvas.mpl_connect('motion_notify_event', self._on_timeline_motion)
+            canvas.mpl_connect('button_release_event', self._on_timeline_release)
+            canvas.mpl_connect('figure_leave_event', self._on_timeline_leave)
         else:
             self.orig_ax = ax
             self.orig_canvas = canvas
             self.orig_cursor = cursor
+            canvas.mpl_connect('button_press_event', self._on_waveform_click)
 
-        # Permitir hacer clic directo en la onda para saltar a ese instante
-        canvas.mpl_connect('button_press_event', self._on_waveform_click)
+    def _on_timeline_motion(self, event):
+        """Maneja el hover (cambio de cursor) y el arrastre activo (mover o estirar)."""
+        if not self.processor or not self.processor.metadata or not self.dub_canvas:
+            return
+
+        canvas_widget = self.dub_canvas.get_tk_widget()
+
+        # CASO 1: Arrastre Activo (El usuario tiene el botón presionado y mueve el mouse)
+        if self.drag_mode is not None:
+            if event.xdata is None:
+                return
+
+            self.drag_has_moved = True
+            delta_x = event.xdata - self.drag_start_x
+
+            if self.drag_mode == "MOVE":
+                dur = self.orig_seg_end - self.orig_seg_start
+                new_start = max(0, self.orig_seg_start + delta_x)
+                new_end = new_start + dur
+                if new_end > self.total_duration_ms:
+                    new_end = self.total_duration_ms
+                    new_start = max(0, new_end - dur)
+
+                # Actualizar el rectángulo fantasma
+                if self.ghost_patch:
+                    self.ghost_patch.remove()
+                self.ghost_patch = self.dub_ax.axvspan(new_start, new_end, color='#00e5ff', alpha=0.35, zorder=5)
+                self.dub_canvas.draw_idle()
+                self.lbl_time.configure(text=f"Mover: {int(new_start)}ms → {int(new_end)}ms")
+
+            elif self.drag_mode == "RESIZE":
+                new_end = max(self.orig_seg_start + 300, self.orig_seg_end + delta_x)
+                if new_end > self.total_duration_ms:
+                    new_end = self.total_duration_ms
+
+                target_dur = max(300, new_end - self.orig_seg_start)
+                ratio = self.orig_clip_raw_duration / target_dur if self.orig_clip_raw_duration > 0 else 1.0
+                ratio = max(0.5, min(ratio, 5.0))
+
+                # Actualizar el rectángulo fantasma
+                if self.ghost_patch:
+                    self.ghost_patch.remove()
+                self.ghost_patch = self.dub_ax.axvspan(self.orig_seg_start, new_end, color='#ffc107', alpha=0.35, zorder=5)
+                self.dub_canvas.draw_idle()
+                self.lbl_time.configure(text=f"Fin: {int(new_end)}ms | Ratio: {ratio:.2f}x")
+
+            return
+
+        # CASO 2: Hover (Detección para cambiar cursor a ↔ o ✋)
+        if event.xdata is None:
+            canvas_widget.configure(cursor="")
+            return
+
+        tol = max(200.0, self.total_duration_ms * 0.015)
+        for seg in self.processor.metadata:
+            s_ms = seg.get("start_ms", 0)
+            e_ms = seg.get("end_ms", 0)
+
+            # Borde derecho: Estirar/Comprimir (↔)
+            if abs(event.xdata - e_ms) <= tol:
+                canvas_widget.configure(cursor="sb_h_double_arrow")
+                return
+
+            # Cuerpo del segmento: Desplazar (✋)
+            if (s_ms + tol) < event.xdata < (e_ms - tol):
+                canvas_widget.configure(cursor="fleur")
+                return
+
+        canvas_widget.configure(cursor="")
+
+    def _on_timeline_press(self, event):
+        """Detecta si el clic es para iniciar mover, estirar o hacer seek."""
+        if event.button != 1 or event.xdata is None or not self.processor:
+            return
+
+        tol = max(200.0, self.total_duration_ms * 0.015)
+        click_x = event.xdata
+
+        for seg in self.processor.metadata:
+            s_ms = seg.get("start_ms", 0)
+            e_ms = seg.get("end_ms", 0)
+
+            # 1. Clic en el borde derecho -> RESIZE
+            if abs(click_x - e_ms) <= tol:
+                self.drag_mode = "RESIZE"
+                self.drag_segment = seg
+                self.drag_start_x = click_x
+                self.orig_seg_start = s_ms
+                self.orig_seg_end = e_ms
+                self.drag_has_moved = False
+
+                # Calcular duración pura del archivo generado
+                fname = seg.get("filename", "")
+                fpath = os.path.join(self.project_paths["audios_dir"], fname)
+                if os.path.exists(fpath):
+                    try:
+                        self.orig_clip_raw_duration = len(AudioSegment.from_file(fpath))
+                    except Exception:
+                        self.orig_clip_raw_duration = max(300, e_ms - s_ms)
+                else:
+                    self.orig_clip_raw_duration = max(300, e_ms - s_ms)
+
+                self.ghost_patch = self.dub_ax.axvspan(s_ms, e_ms, color='#ffc107', alpha=0.35, zorder=5)
+                self.dub_canvas.draw_idle()
+                return
+
+            # 2. Clic en el cuerpo -> MOVE
+            if (s_ms + tol) < click_x < (e_ms - tol):
+                self.drag_mode = "MOVE"
+                self.drag_segment = seg
+                self.drag_start_x = click_x
+                self.orig_seg_start = s_ms
+                self.orig_seg_end = e_ms
+                self.drag_has_moved = False
+
+                self.ghost_patch = self.dub_ax.axvspan(s_ms, e_ms, color='#00e5ff', alpha=0.35, zorder=5)
+                self.dub_canvas.draw_idle()
+                return
+
+        # 3. Clic fuera de cualquier segmento -> SEEK normal
+        self.drag_mode = "SEEK"
+        self._on_waveform_click(event)
+
+    def _on_timeline_release(self, event):
+        """Aplica los cambios al soltar el mouse tras mover o estirar."""
+        if self.ghost_patch:
+            try:
+                self.ghost_patch.remove()
+            except Exception:
+                pass
+            self.ghost_patch = None
+            if self.dub_canvas:
+                self.dub_canvas.draw_idle()
+
+        if self.dub_canvas:
+            self.dub_canvas.get_tk_widget().configure(cursor="")
+
+        mode = self.drag_mode
+        seg = self.drag_segment
+        has_moved = self.drag_has_moved
+
+        self.drag_mode = None
+        self.drag_segment = None
+        self.drag_has_moved = False
+
+        if not has_moved or event.xdata is None or not seg:
+            if mode in ("MOVE", "RESIZE") and event.xdata is not None:
+                self._on_waveform_click(event)
+            return
+
+        delta_x = event.xdata - self.drag_start_x
+
+        if mode == "MOVE":
+            dur = self.orig_seg_end - self.orig_seg_start
+            new_start = int(max(0, self.orig_seg_start + delta_x))
+            new_end = int(new_start + dur)
+            if new_end > self.total_duration_ms:
+                new_end = int(self.total_duration_ms)
+                new_start = int(max(0, new_end - dur))
+
+            seg["start_ms"] = new_start
+            seg["end_ms"] = new_end
+            self.processor.recalculate_end_times()
+            self.pm.save_project_metadata(self.current_project, self.processor.metadata)
+            self._refresh_tab3()
+
+        elif mode == "RESIZE":
+            new_end = int(max(self.orig_seg_start + 300, self.orig_seg_end + delta_x))
+            if new_end > self.total_duration_ms:
+                new_end = int(self.total_duration_ms)
+
+            seg["end_ms"] = new_end
+            target_dur = max(300, new_end - self.orig_seg_start)
+            ratio = self.orig_clip_raw_duration / target_dur if self.orig_clip_raw_duration > 0 else 1.0
+            ratio = max(0.5, min(ratio, 5.0))
+
+            # Aplicar atempo con ffmpeg para actualizar el audio estirado/comprimido
+            try:
+                self.processor.process_segment(seg, manual_ratio=ratio)
+            except Exception as e:
+                print(f"[WARN] Error aplicando atempo tras resize: {e}")
+
+            self.processor.recalculate_end_times()
+            self.pm.save_project_metadata(self.current_project, self.processor.metadata)
+            self._refresh_tab3()
+
+    def _on_timeline_leave(self, event):
+        """Restaura el cursor si el mouse sale del canvas."""
+        if self.drag_mode is None and self.dub_canvas:
+            self.dub_canvas.get_tk_widget().configure(cursor="")
+
 
     def _update_playhead(self, current_ms):
         """Mueve la línea vertical sobre ambas ondas en tiempo real de forma ultra ligera."""
