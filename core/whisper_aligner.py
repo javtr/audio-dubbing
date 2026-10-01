@@ -33,18 +33,19 @@ class WhisperAligner:
         return " ".join(full_text)
 
     def generate_gemini_prompt(self, spanish_text):
-        """Genera el prompt listo para copiar y pegar en Gemini Web con directrices de isocronía."""
+        """Genera el prompt listo para copiar y pegar en Gemini Web con directrices de concisión y control de longitud."""
         prompt = f"""Actúa como un director de doblaje profesional y traductor audiovisual experto en adaptación de guiones (Script Adaptation & Dubbing Localization).
-A continuación tienes la transcripción completa de un video en español para ser doblado al inglés mediante clonación de voz por IA.
+A continuación tienes la transcripción en español de un video para ser doblado al inglés mediante clonación de voz por IA (TTS).
 
-🎯 OBJETIVO CRÍTICO: ISOCRONÍA Y EXTENSIÓN RÍTMICA
-El mayor error en doblaje es traducir de forma compacta o literal. El inglés suele pronunciarse más rápido y con menos sílabas que el español (~25% a 35% menos tiempo). Si la frase en inglés es demasiado corta, el audio terminará mucho antes de tiempo dejando silencios incómodos en el video.
+🎯 OBJETIVO CRÍTICO: TRADUCCIÓN CONCISA Y CONTROL DE LONGITUD (EVITAR FRASES LARGAS)
+Uno de los problemas más graves en el doblaje con IA es generar traducciones en inglés demasiado largas, verbosas o infladas. Cuando la frase en inglés tiene demasiadas palabras, el software de audio se ve obligado a acelerar excesivamente la voz (atempo), arruinando la naturalidad, dicción y fluidez.
 
-⚠️ REGLAS OBLIGATORIAS DE ADAPTACIÓN (ISOCRONÍA):
-1. **Compensación de Longitud:** Debes adaptar y enriquecer la redacción en inglés utilizando vocabulario descriptivo, conectores naturales ("as we can clearly see", "let's take a closer look at", "what you need to understand is", "keep in mind that", "right over here") y explicaciones fluidas para que la frase en inglés tenga una DURACIÓN DE PRONUNCIACIÓN APROXIMADAMENTE IGUAL (±10%) a la frase original en español.
-2. **Naturalidad:** No inventes datos técnicos falsos ni repitas palabras absurdamente; usa la riqueza y musicalidad del inglés nativo para llenar el espacio temporal de forma orgánica y profesional.
-3. **Segmentación:** Divide el guion en oraciones completas y con sentido lógico (no cortes frases a la mitad).
-4. **Tono Emocional:** Asigna a cada fragmento uno de estos 4 tonos exactos:
+⚠️ REGLAS OBLIGATORIAS DE ADAPTACIÓN:
+1. **Brevedad y Concisión Absoluta:** La traducción al inglés debe ser DIRECTA, CONCISA y NATURAL. El número de palabras en inglés DEBE SER MENOR O IGUAL al del español. NUNCA generes frases en inglés con más palabras que su correspondiente en español.
+2. **PROHIBIDO EL RELLENO (NO FILLERS):** NO agregues frases introductorias infladas ni conectores innecesarios (PROHIBIDO: "So let's take a closer look and see", "what you need to understand is", "as we can clearly observe", "keep in mind that", "it is worth noting that", etc.). Ve directamente a la idea principal con un inglés dinámico y conciso.
+3. **Preferencia de Silencio vs Aceleración:** Es mil veces preferible que la frase en inglés sea corta y deje un pequeño respiro de silencio natural, a que sea kilométrica y obligue a acelerar el audio a velocidades no humanas.
+4. **Segmentación:** Cada fragmento debe ser una oración o pensamiento coherente completo.
+5. **Tono Emocional:** Asigna a cada fragmento uno de estos 4 tonos exactos según el contexto:
    - "Conversational": Tono casual, neutro, informal o introductorio.
    - "Explanatory": Tono didáctico, explicando conceptos técnicos o pasos con calma.
    - "Effusive": Tono enérgico, de advertencia, sorpresa, entusiasmo o énfasis marcado.
@@ -56,14 +57,14 @@ Devuelve ÚNICAMENTE un bloque de código JSON válido con esta estructura exact
   {{
     "id": "seg-0",
     "original": "<frase en español>",
-    "translated": "<adaptación al inglés con longitud y ritmo equivalente al español>",
+    "translated": "<traducción concisa y directa al inglés, sin rellenos innecesarios>",
     "tone": "Conversational",
     "filename": "segment_000.wav"
   }},
   {{
     "id": "seg-1",
     "original": "<frase en español>",
-    "translated": "<adaptación al inglés con longitud y ritmo equivalente al español>",
+    "translated": "<traducción concisa y directa al inglés, sin rellenos innecesarios>",
     "tone": "Explanatory",
     "filename": "segment_001.wav"
   }}

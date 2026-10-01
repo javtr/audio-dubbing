@@ -22,7 +22,7 @@ class AudioProcessor:
             self.recalculate_end_times()
 
     def recalculate_end_times(self):
-        """Asegura orden cronológico y calcula end_ms si no está definido."""
+        """Asegura orden cronológico y calcula end_ms solo si no está definido o es inválido."""
         if not self.metadata or self.original_audio is None:
             return
 
@@ -33,11 +33,15 @@ class AudioProcessor:
         self.metadata.sort(key=lambda x: x['start_ms'])
         total_len = len(self.original_audio)
 
-        for i in range(len(self.metadata) - 1):
-            self.metadata[i]['end_ms'] = self.metadata[i+1]['start_ms']
-
-        if self.metadata:
-            self.metadata[-1]['end_ms'] = total_len
+        for i, seg in enumerate(self.metadata):
+            cur_end = seg.get('end_ms')
+            cur_start = seg.get('start_ms', 0)
+            if cur_end is None or cur_end <= cur_start:
+                if i < len(self.metadata) - 1:
+                    next_s = self.metadata[i+1].get('start_ms', cur_start + 1000)
+                    seg['end_ms'] = max(cur_start + 100, next_s)
+                else:
+                    seg['end_ms'] = total_len
 
     def process_segment(self, segment, manual_ratio=None):
         """

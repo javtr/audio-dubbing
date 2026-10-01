@@ -360,7 +360,6 @@ class AudioDubbingStudio(ctk.CTk):
         self.razor_guide_line = None    # Línea vertical roja guía de corte
         self.btn_tool_select = None
         self.btn_tool_razor = None
-        self.btn_split_playhead = None
         self.btn_delete_seg = None
 
         # Atajos de teclado para edición
@@ -901,7 +900,7 @@ class AudioDubbingStudio(ctk.CTk):
         self.slider_vol_dub.set(1.0)
         self.slider_vol_dub.pack(side="left", padx=4)
 
-        # Barra de Herramientas de Edición (Selección, Cuchilla, Corte en Playhead, Suprimir)
+        # Barra de Herramientas de Edición (Selección, Cuchilla, Suprimir)
         self.btn_tool_select = ctk.CTkButton(
             dub_header, text="↖️ Selección", width=95, height=24,
             fg_color="#1f6aa5", hover_color="#144870",
@@ -915,13 +914,6 @@ class AudioDubbingStudio(ctk.CTk):
             command=lambda: self._set_tool_mode("RAZOR")
         )
         self.btn_tool_razor.pack(side="left", padx=2)
-
-        self.btn_split_playhead = ctk.CTkButton(
-            dub_header, text="✂️ Cortar en Playhead", width=135, height=24,
-            fg_color="#333333", hover_color="#e65100",
-            command=self._split_at_playhead
-        )
-        self.btn_split_playhead.pack(side="left", padx=2)
 
         self.btn_delete_seg = ctk.CTkButton(
             dub_header, text="🗑️ Suprimir", width=78, height=24,
@@ -1178,8 +1170,18 @@ class AudioDubbingStudio(ctk.CTk):
         if not self.processor or not self.project_paths or not segment:
             return
 
-        start_ms = segment.get("start_ms", 0)
-        offset_ms = int(cut_ms - start_ms)
+        start_ms = int(segment.get("start_ms", 0))
+        end_ms = int(segment.get("end_ms", start_ms))
+        cut_ms = int(cut_ms)
+
+        # Si el clic es literalmente en el borde idéntico (<= 2 ms), ignorar
+        if cut_ms <= start_ms + 2 or cut_ms >= end_ms - 2:
+            if hasattr(self, 'lbl_dub_hover'):
+                self.lbl_dub_hover.configure(text="⚠️ Haz clic dentro del segmento para cortar")
+            return
+
+        offset_ms = cut_ms - start_ms
+        seg_dur = max(1, end_ms - start_ms)
 
         fname = segment.get("filename", "")
         fpath = os.path.join(self.project_paths["audios_dir"], fname)
@@ -1197,13 +1199,36 @@ class AudioDubbingStudio(ctk.CTk):
                 return
 
         audio_len = len(audio)
-        if offset_ms < 60 or offset_ms > (audio_len - 60):
-            if hasattr(self, 'lbl_dub_hover'):
-                self.lbl_dub_hover.configure(text="⚠️ Corte demasiado cercano al extremo (mínimo 60 ms)")
-            return
+        if audio_len <= 0:
+            audio = AudioSegment.silent(duration=seg_dur)
+            audio_len = seg_dur
 
-        part1_audio = audio[:offset_ms]
-        part2_audio = audio[offset_ms:]
+        # Punto de corte exacto en el archivo de audio
+        if offset_ms >= audio_len:
+            # El usuario está cortando en el silencio posterior a la voz
+            part1_audio = audio
+            part2_dur = max(10, end_ms - cut_ms)
+            part2_audio = AudioSegment.silent(duration=part2_dur)
+        elif offset_ms <= 0:
+            # El usuario está cortando justo al inicio
+            part1_dur = max(10, cut_ms - start_ms)
+            part1_audio = AudioSegment.silent(duration=part1_dur)
+            part2_audio = audio
+        else:
+            # El corte cae dentro de los datos del audio
+            if seg_dur > 0 and abs(seg_dur - audio_len) > 100:
+                cut_point = int(offset_ms * (audio_len / seg_dur))
+            else:
+                cut_point = offset_ms
+            cut_point = max(1, min(audio_len - 1, cut_point))
+            part1_audio = audio[:cut_point]
+            part2_audio = audio[cut_point:]
+
+        # Asegurar que ambos audios tengan al menos 10 ms para ser exportables sin error
+        if len(part1_audio) == 0:
+            part1_audio = AudioSegment.silent(duration=10)
+        if len(part2_audio) == 0:
+            part2_audio = AudioSegment.silent(duration=10)
 
         # Generar nombres únicos de archivo
         base, ext = os.path.splitext(fname)
@@ -1227,9 +1252,9 @@ class AudioDubbingStudio(ctk.CTk):
 
         # Calcular proporción de las marcas de anclaje originales
         orig_s = segment.get("orig_start_ms", start_ms)
-        orig_e = segment.get("orig_end_ms", segment.get("end_ms", start_ms + audio_len))
+        orig_e = segment.get("orig_end_ms", end_ms)
         orig_dur = max(0, orig_e - orig_s)
-        orig_mid = int(orig_s + (orig_dur * (offset_ms / max(1, audio_len))))
+        orig_mid = int(orig_s + (orig_dur * (offset_ms / seg_dur)))
 
         # Crear los dos nuevos segmentos
         seg_idx = self.processor.metadata.index(segment)
@@ -1238,24 +1263,26 @@ class AudioDubbingStudio(ctk.CTk):
         seg_a["id"] = f"{segment['id']}_a"
         seg_a["filename"] = part1_name
         seg_a["start_ms"] = start_ms
-        seg_a["end_ms"] = start_ms + len(part1_audio)
+        seg_a["end_ms"] = cut_ms
         seg_a["orig_start_ms"] = orig_s
         seg_a["orig_end_ms"] = orig_mid
 
         seg_b = dict(segment)
         seg_b["id"] = f"{segment['id']}_b"
         seg_b["filename"] = part2_name
-        seg_b["start_ms"] = start_ms + len(part1_audio)
-        seg_b["end_ms"] = start_ms + len(part1_audio) + len(part2_audio)
+        seg_b["start_ms"] = cut_ms
+        seg_b["end_ms"] = end_ms
         seg_b["orig_start_ms"] = orig_mid
         seg_b["orig_end_ms"] = orig_e
 
         # Reemplazar segmento original por ambas mitades
         self.processor.metadata[seg_idx:seg_idx + 1] = [seg_a, seg_b]
+        if fname in self.processor.processed_segments:
+            del self.processor.processed_segments[fname]
         self.processor.processed_segments[part1_name] = part1_audio
         self.processor.processed_segments[part2_name] = part2_audio
 
-        # Seleccionar automáticamente la parte B
+        # Seleccionar automáticamente la parte B para facilitar supresión o movimiento inmediato
         self.selected_segment_id = seg_b["id"]
 
         self.processor.recalculate_end_times()
@@ -1265,17 +1292,6 @@ class AudioDubbingStudio(ctk.CTk):
         self._update_delete_button_state()
         if hasattr(self, 'lbl_dub_hover'):
             self.lbl_dub_hover.configure(text=f"✂️ Segmento dividido en {cut_ms} ms: [{seg_a['id']}] y [{seg_b['id']}]")
-
-    def _split_at_playhead(self):
-        """Divide el segmento que se encuentra en la posición actual del cursor de reproducción."""
-        if not self.processor or not self.processor.metadata:
-            return
-        cur_pos = int(self.seek_slider.get())
-        seg = self._find_segment_at_ms(cur_pos)
-        if not seg:
-            messagebox.showinfo("Corte en Cabezal", f"No hay ningún segmento de audio bajo el cabezal ({cur_pos} ms).")
-            return
-        self._split_segment(seg, cur_pos)
 
     def _delete_selected_segment(self):
         """Elimina el segmento seleccionado del timeline liberando su espacio."""
