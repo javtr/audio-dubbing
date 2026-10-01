@@ -4,6 +4,7 @@ from tkinter import messagebox
 import customtkinter as ctk
 import pygame
 from ui.widgets.segment_card import SegmentCard
+from core.timing_validator import TimingValidator
 
 class TabDubbingView(ctk.CTkFrame):
     """Pestaña 2: Doblaje y clonación de voz con Pinokio (0.6B / 1.7B)."""
@@ -49,6 +50,12 @@ class TabDubbingView(ctk.CTkFrame):
         self.lbl_t2_progress = ctk.CTkLabel(top_frame, text="", font=("Arial", 12), text_color="#aaaaaa")
         self.lbl_t2_progress.pack(side="left", padx=15)
 
+        # Banner de Salud y Consistencia de Tiempos
+        self.banner_frame = ctk.CTkFrame(self, height=36, corner_radius=6, border_width=1, fg_color="#1b2e1b", border_color="#2e7d32")
+        self.banner_frame.pack(fill="x", padx=10, pady=(0, 8))
+        self.lbl_banner = ctk.CTkLabel(self.banner_frame, text="", font=("Arial", 12, "bold"))
+        self.lbl_banner.pack(side="left", padx=15, pady=6)
+
         # Contenedor desplazable de tarjetas
         self.scroll_cards = ctk.CTkScrollableFrame(self, label_text="Segmentos a Doblar")
         self.scroll_cards.pack(fill="both", expand=True, padx=10, pady=(0, 10))
@@ -60,12 +67,25 @@ class TabDubbingView(ctk.CTkFrame):
 
         segments = self.app.segments_data
         if not segments:
+            self.banner_frame.pack_forget()
             ctk.CTkLabel(
                 self.scroll_cards,
                 text="No hay segmentos cargados. Completa el Paso 1 primero.",
                 text_color="#aaaaaa"
             ).pack(pady=40)
             return
+
+        # Validar salud de tiempos
+        self.banner_frame.pack(fill="x", padx=10, pady=(0, 8), before=self.scroll_cards)
+        val = TimingValidator.validate(segments)
+        if not val["has_errors"]:
+            self.banner_frame.configure(fg_color="#1b2e1b", border_color="#2e7d32")
+            self.lbl_banner.configure(text=val["summary_text"], text_color="#81c784")
+        else:
+            self.banner_frame.configure(fg_color="#3e1b1b", border_color="#e53935")
+            self.lbl_banner.configure(text=val["summary_text"], text_color="#ef9a9a")
+
+        anomalies_map = val["anomalies"]
 
         audio_file = self.app.project_paths.get("audio_file") if self.app.project_paths else None
         audios_dir = self.app.project_paths.get("audios_dir") if self.app.project_paths else None
@@ -78,7 +98,8 @@ class TabDubbingView(ctk.CTkFrame):
                 audios_dir,
                 self._on_segment_saved,
                 self._on_segment_deleted,
-                self._start_single_dubbing
+                self._start_single_dubbing,
+                anomalies=anomalies_map.get(seg['id'])
             )
             card.pack(fill="x", padx=5, pady=5)
             self.card_widgets[seg['id']] = card

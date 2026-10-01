@@ -8,7 +8,7 @@ import pygame
 class SegmentCard(ctk.CTkFrame):
     """Tarjeta individual para editar y doblar cada segmento en la Pestaña 2."""
 
-    def __init__(self, master, segment_data, audio_path, audios_dir, save_callback, delete_callback, request_callback, **kwargs):
+    def __init__(self, master, segment_data, audio_path, audios_dir, save_callback, delete_callback, request_callback, anomalies=None, **kwargs):
         super().__init__(master, **kwargs)
         self.data = segment_data
         self.original_audio_path = audio_path
@@ -16,8 +16,11 @@ class SegmentCard(ctk.CTkFrame):
         self.save_callback = save_callback
         self.delete_callback = delete_callback
         self.request_callback = request_callback
+        self.anomalies = anomalies or []
 
-        self.configure(fg_color="#2b2b2b", border_width=1, border_color="#3d3d3d")
+        border_clr = "#e53935" if self.anomalies else "#3d3d3d"
+        border_w = 2 if self.anomalies else 1
+        self.configure(fg_color="#2b2b2b", border_width=border_w, border_color=border_clr)
         self.grid_columnconfigure(0, weight=0)
         self.grid_columnconfigure(1, weight=1)
 
@@ -40,6 +43,20 @@ class SegmentCard(ctk.CTkFrame):
         # Indicador de balance y densidad de palabras: generadas / originales (pct%) | clasificacion
         self.lbl_density = ctk.CTkLabel(text_frame, text="", font=("Arial", 11, "bold"), anchor="w", justify="left")
         self.lbl_density.grid(row=2, column=0, pady=(3, 0), sticky="w")
+
+        # Advertencia de tiempos si existen anomalías
+        if self.anomalies:
+            self.lbl_timing_warning = ctk.CTkLabel(
+                text_frame,
+                text="⚠️ " + " | ".join(self.anomalies),
+                font=("Arial", 11, "bold"),
+                text_color="#ff5252",
+                wraplength=650,
+                justify="left"
+            )
+            self.lbl_timing_warning.grid(row=3, column=0, pady=(3, 0), sticky="w")
+        else:
+            self.lbl_timing_warning = None
 
         # Controles de tiempo y tono
         ctrl_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -160,8 +177,8 @@ class SegmentCard(ctk.CTkFrame):
             self.data['tone'] = self.opt_tone.get()
             self.save_callback(self.data)
             self.update_density_metrics()
-            self.configure(border_color="#28a745")
-            self.after(1000, lambda: self.configure(border_color="#3d3d3d"))
+            default_clr = "#e53935" if self.anomalies else "#3d3d3d"
+            self.after(1000, lambda: self.configure(border_color=default_clr))
         except ValueError:
             messagebox.showwarning("Atención", "Los tiempos deben ser números enteros en milisegundos.")
 

@@ -4,6 +4,7 @@ from .pinokio_client import PinokioClient
 from .audio_processor import AudioProcessor
 from .playback_engine import PlaybackEngine
 from .export_service import ExportService
+from .timing_validator import TimingValidator
 
 __all__ = [
     "ProjectManager",
@@ -11,5 +12,7 @@ __all__ = [
     "PinokioClient",
     "AudioProcessor",
     "PlaybackEngine",
-    "ExportService"
+    "ExportService",
+    "TimingValidator"
 ]
+

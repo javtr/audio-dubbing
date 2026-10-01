@@ -214,6 +214,7 @@ class TabScriptView(ctk.CTkFrame):
         threading.Thread(target=_worker, daemon=True).start()
 
     def _on_align_success(self, aligned_data, duration_ms):
+        from core.timing_validator import TimingValidator
         self.btn_align.configure(state="normal", text="⏱️ Sincronizar Tiempos (Whisper)")
         self.app.segments_data = aligned_data
         self.app.master_segments = copy.deepcopy(aligned_data)
@@ -224,7 +225,23 @@ class TabScriptView(ctk.CTkFrame):
             self.app.processor.recalculate_end_times()
         self.refresh()
         self.app.notify_metadata_updated()
-        messagebox.showinfo("Éxito", f"¡Tiempos sincronizados! {len(aligned_data)} segmentos alineados ({duration_ms} ms analizados).")
+
+        val = TimingValidator.validate(aligned_data, duration_ms)
+        if val["has_errors"]:
+            self.lbl_t1_align_status.configure(text=val["summary_text"], text_color="#ffb74d")
+            messagebox.showwarning(
+                "Sincronización con Advertencias",
+                f"Tiempos sincronizados ({len(aligned_data)} segmentos, {duration_ms} ms analizados).\n\n"
+                f"{val['summary_text']}\n\n"
+                "Revisa la Pestaña 2 (Doblaje) para inspeccionar los segmentos destacados."
+            )
+        else:
+            self.lbl_t1_align_status.configure(text=val["summary_text"], text_color="#28a745")
+            messagebox.showinfo(
+                "Éxito",
+                f"¡Tiempos sincronizados! {len(aligned_data)} segmentos alineados ({duration_ms} ms analizados).\n"
+                "Todos los segmentos están en perfecto orden cronológico."
+            )
 
     def _on_align_error(self, err):
         self.btn_align.configure(state="normal", text="⏱️ Sincronizar Tiempos (Whisper)")
