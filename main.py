@@ -10,10 +10,14 @@ import subprocess
 import tkinter as tk
 from tkinter import filedialog, messagebox
 import customtkinter as ctk
+import numpy as np
+import matplotlib
+matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import pygame
 from pydub import AudioSegment
+
 
 from core.project_manager import ProjectManager
 from core.whisper_aligner import WhisperAligner
