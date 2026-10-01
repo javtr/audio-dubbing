@@ -67,7 +67,8 @@ class TabDubbingView(ctk.CTkFrame):
 
         segments = self.app.segments_data
         if not segments:
-            self.banner_frame.pack_forget()
+            self.banner_frame.configure(fg_color="#2b2b2b", border_color="#3d3d3d")
+            self.lbl_banner.configure(text="ℹ️ No hay segmentos cargados en este proyecto. Ve al Paso 1 para sincronizar.", text_color="#aaaaaa")
             ctk.CTkLabel(
                 self.scroll_cards,
                 text="No hay segmentos cargados. Completa el Paso 1 primero.",
@@ -76,7 +77,6 @@ class TabDubbingView(ctk.CTkFrame):
             return
 
         # Validar salud de tiempos
-        self.banner_frame.pack(fill="x", padx=10, pady=(0, 8), before=self.scroll_cards)
         val = TimingValidator.validate(segments)
         if not val["has_errors"]:
             self.banner_frame.configure(fg_color="#1b2e1b", border_color="#2e7d32")
