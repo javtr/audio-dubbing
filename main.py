@@ -253,6 +253,15 @@ class AudioDubbingStudio(ctk.CTk):
         self.play_start_offset = 0
         self.segment_rows = {}
 
+        # Cabezal de reproducción sobre las ondas (Playhead)
+        self.orig_canvas = None
+        self.orig_cursor = None
+        self.orig_ax = None
+        self.dub_canvas = None
+        self.dub_cursor = None
+        self.dub_ax = None
+
+
         self._build_top_bar()
         self._build_tabs()
         self._check_pinokio_status_async()
@@ -852,44 +861,52 @@ class AudioDubbingStudio(ctk.CTk):
         if not self.processor or not self.processor.original_audio:
             return
 
-        # Forma de onda original (Azul)
-        orig_data = self.processor.get_waveform_data(self.processor.original_audio)
-        self._draw_waveform_canvas(self.orig_canvas_frame, orig_data, '#1f77b4')
-
-        # Forma de onda doblada (Naranja con cortes)
+        # Duración total en ms
         mix = self.processor.mix_dubbed_audio()
-        mix_data = self.processor.get_waveform_data(mix)
-
         duration_ms = len(mix) if mix else len(self.processor.original_audio)
         self.total_duration_ms = max(1, duration_ms)
         self.seek_slider.configure(to=self.total_duration_ms)
         self._update_time_label()
 
+        # Forma de onda original (Azul)
+        orig_data = self.processor.get_waveform_data(self.processor.original_audio)
+        self._draw_waveform_canvas(self.orig_canvas_frame, orig_data, '#1f77b4', is_dubbed=False)
+
+        # Forma de onda doblada (Naranja con cortes)
+        mix_data = self.processor.get_waveform_data(mix)
         segs_info = []
         for s in self.processor.metadata:
-            start_f = s.get("start_ms", 0) / self.total_duration_ms
-            end_f = s.get("end_ms", 0) / self.total_duration_ms
-            segs_info.append((start_f, end_f))
+            segs_info.append((s.get("start_ms", 0), s.get("end_ms", 0)))
 
-        self._draw_waveform_canvas(self.dub_canvas_frame, mix_data, '#ff7f0e', segments=segs_info)
+        self._draw_waveform_canvas(self.dub_canvas_frame, mix_data, '#ff7f0e', is_dubbed=True, segments=segs_info)
 
-    def _draw_waveform_canvas(self, frame, samples, color, segments=None):
+    def _draw_waveform_canvas(self, frame, samples, color, is_dubbed=False, segments=None):
         for w in frame.winfo_children():
             w.destroy()
 
         fig, ax = plt.subplots(figsize=(4, 0.9), dpi=80)
         fig.patch.set_facecolor('#2b2b2b')
         ax.set_facecolor('#2b2b2b')
-        ax.plot(samples, color=color, linewidth=0.5)
+
+        # Eje X en milisegundos reales (0 a total_duration_ms)
+        n = len(samples)
+        if n > 0:
+            x_coords = np.linspace(0, self.total_duration_ms, n)
+            ax.plot(x_coords, samples, color=color, linewidth=0.5)
+            max_val = max(abs(float(samples.max())), abs(float(samples.min()))) if n > 0 else 1.0
+            if max_val > 0:
+                ax.set_ylim(-max_val * 1.15, max_val * 1.15)
+        ax.set_xlim(0, self.total_duration_ms)
 
         if segments:
-            n = len(samples)
-            for sf, ef in segments:
-                s_idx = int(sf * n)
-                e_idx = int(ef * n)
-                ax.axvspan(s_idx, e_idx, color='white', alpha=0.12)
-                ax.axvline(x=s_idx, color='#dc3545', linestyle='--', linewidth=0.8)
-                ax.axvline(x=e_idx, color='#dc3545', linestyle='--', linewidth=0.8)
+            for s_ms, e_ms in segments:
+                ax.axvspan(s_ms, e_ms, color='white', alpha=0.10)
+                ax.axvline(x=s_ms, color='#dc3545', linestyle='--', linewidth=0.8)
+                ax.axvline(x=e_ms, color='#dc3545', linestyle='--', linewidth=0.8)
+
+        # Cabezal de reproducción (Playhead) - línea vertical visible en cyan neón (#00e5ff)
+        cur_pos = self.seek_slider.get()
+        cursor = ax.axvline(x=cur_pos, color='#00e5ff', linewidth=1.8, zorder=10)
 
         ax.axis('off')
         plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
@@ -898,6 +915,41 @@ class AudioDubbingStudio(ctk.CTk):
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
         plt.close(fig)
+
+        # Guardar referencias para actualización en tiempo real
+        if is_dubbed:
+            self.dub_ax = ax
+            self.dub_canvas = canvas
+            self.dub_cursor = cursor
+        else:
+            self.orig_ax = ax
+            self.orig_canvas = canvas
+            self.orig_cursor = cursor
+
+        # Permitir hacer clic directo en la onda para saltar a ese instante
+        canvas.mpl_connect('button_press_event', self._on_waveform_click)
+
+    def _update_playhead(self, current_ms):
+        """Mueve la línea vertical sobre ambas ondas en tiempo real de forma ultra ligera."""
+        try:
+            if self.orig_cursor and self.orig_canvas:
+                self.orig_cursor.set_xdata([current_ms, current_ms])
+                self.orig_canvas.draw_idle()
+            if self.dub_cursor and self.dub_canvas:
+                self.dub_cursor.set_xdata([current_ms, current_ms])
+                self.dub_canvas.draw_idle()
+        except Exception:
+            pass
+
+    def _on_waveform_click(self, event):
+        """Salta la reproducción directamente al punto de la onda donde se hizo clic."""
+        if event.xdata is not None and 0 <= event.xdata <= self.total_duration_ms:
+            target_ms = int(event.xdata)
+            self.seek_slider.set(target_ms)
+            self._update_time_label()
+            self._update_playhead(target_ms)
+            if self.playing_id == "global":
+                self._restart_global_playback()
 
     def _toggle_mute_orig(self):
         self.mute_original = not self.mute_original
@@ -909,6 +961,8 @@ class AudioDubbingStudio(ctk.CTk):
 
     def _on_seek_change(self, val):
         self._update_time_label()
+        self._update_playhead(float(val))
+
 
     def _on_seek_release(self, event):
         self.is_dragging = False
@@ -1009,9 +1063,10 @@ class AudioDubbingStudio(ctk.CTk):
                         if elapsed <= self.total_duration_ms:
                             self.seek_slider.set(elapsed)
                             self._update_time_label()
+                            self._update_playhead(elapsed)
 
                     if self.playing_process and self.playing_process.poll() is None:
-                        self.after(50, _poll)
+                        self.after(40, _poll)
                     else:
                         try:
                             btn_widget.configure(text=reset_text)
@@ -1021,8 +1076,10 @@ class AudioDubbingStudio(ctk.CTk):
                         if play_id == "global" and not self.is_dragging:
                             self.seek_slider.set(0)
                             self._update_time_label()
+                            self._update_playhead(0)
 
-            self.after(50, _poll)
+            self.after(40, _poll)
+
         except Exception:
             # Fallback
             from pydub.playback import play
