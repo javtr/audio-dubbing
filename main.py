@@ -425,7 +425,26 @@ class AudioDubbingStudio(ctk.CTk):
         self.lbl_pinokio.pack(side="left", padx=(0, 8))
 
         btn_check_pinokio = ctk.CTkButton(pinokio_frame, text="🔄", width=32, height=28, fg_color="#333333", command=self._check_pinokio_status_async)
-        btn_check_pinokio.pack(side="left")
+        btn_check_pinokio.pack(side="left", padx=(0, 6))
+
+        btn_free_vram = ctk.CTkButton(pinokio_frame, text="🧹 Liberar VRAM", width=105, height=28, fg_color="#37474f", hover_color="#263238", command=self._free_vram_action)
+        btn_free_vram.pack(side="left")
+
+    def _free_vram_action(self):
+        try:
+            self.aligner.unload_model()
+            import gc
+            gc.collect()
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.ipc_collect()
+            except Exception:
+                pass
+            messagebox.showinfo("VRAM Liberada", "El modelo de Whisper ha sido descargado y la VRAM de la GPU ha sido liberada para Pinokio.")
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo liberar la memoria: {e}")
 
     def _check_pinokio_status_async(self):
         def _check():
@@ -511,7 +530,7 @@ class AudioDubbingStudio(ctk.CTk):
     # 2. SISTEMA DE PESTAÑAS
     # ==========================================================
     def _build_tabs(self):
-        self.tabview = ctk.CTkTabview(self)
+        self.tabview = ctk.CTkTabview(self, command=self._on_tab_changed)
         self.tabview.pack(fill="both", expand=True, padx=15, pady=(5, 15))
 
         self.tab1 = self.tabview.add("1. Guion y Tiempos")
@@ -521,6 +540,11 @@ class AudioDubbingStudio(ctk.CTk):
         self._build_tab1_ui()
         self._build_tab2_ui()
         self._build_tab3_ui()
+
+    def _on_tab_changed(self):
+        current_tab = self.tabview.get()
+        if current_tab in ["2. Doblaje (Pinokio)", "3. Estudio y Mezcla"]:
+            self.aligner.unload_model()
 
     # ----------------------------------------------------------
     # PESTAÑA 1: TRANSCRIPCIÓN, PROMPT GEMINI Y SINCRONIZACIÓN
@@ -605,6 +629,8 @@ class AudioDubbingStudio(ctk.CTk):
                 self.run_on_ui_thread(lambda: self._on_transcribe_success(text))
             except Exception as e:
                 self.run_on_ui_thread(lambda: self._on_transcribe_error(str(e)))
+            finally:
+                self.aligner.unload_model()
 
         gc.collect()
         threading.Thread(target=_worker, daemon=True).start()
@@ -686,6 +712,8 @@ class AudioDubbingStudio(ctk.CTk):
                 self.run_on_ui_thread(lambda: self._on_align_success(aligned_data, duration_ms))
             except Exception as e:
                 self.run_on_ui_thread(lambda: self._on_align_error(str(e)))
+            finally:
+                self.aligner.unload_model()
 
         gc.collect()
         threading.Thread(target=_worker, daemon=True).start()
@@ -888,6 +916,7 @@ class AudioDubbingStudio(ctk.CTk):
         orig_box.grid(row=0, column=0, sticky="nsew", padx=5, pady=3)
         orig_box.grid_columnconfigure(0, weight=1)
         orig_box.grid_rowconfigure(1, weight=1)
+        orig_box.grid_rowconfigure(2, weight=0)
 
         orig_header = ctk.CTkFrame(orig_box, fg_color="transparent")
         orig_header.grid(row=0, column=0, sticky="ew", padx=8, pady=2)
@@ -898,17 +927,26 @@ class AudioDubbingStudio(ctk.CTk):
         self.slider_vol_orig.set(1.0)
         self.slider_vol_orig.pack(side="left", padx=5)
 
-        self.lbl_orig_hover = ctk.CTkLabel(orig_header, text="", font=("Arial", 11, "italic"), text_color="#38bdf8", anchor="w")
-        self.lbl_orig_hover.pack(side="left", padx=15, fill="x", expand=True)
-
         self.orig_canvas_frame = ctk.CTkFrame(orig_box)
         self.orig_canvas_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=2)
+
+        orig_footer = ctk.CTkFrame(orig_box, height=26, fg_color="#181818", corner_radius=4)
+        orig_footer.grid(row=2, column=0, sticky="ew", padx=5, pady=(1, 3))
+        self.lbl_orig_hover = ctk.CTkLabel(
+            orig_footer, 
+            text="Pasa el cursor sobre la onda para inspeccionar el texto...", 
+            font=("Arial", 11), 
+            text_color="#64748b", 
+            anchor="w"
+        )
+        self.lbl_orig_hover.pack(side="left", padx=10, fill="x", expand=True)
 
         # Pista Doblada
         dub_box = ctk.CTkFrame(wave_frame)
         dub_box.grid(row=1, column=0, sticky="nsew", padx=5, pady=3)
         dub_box.grid_columnconfigure(0, weight=1)
         dub_box.grid_rowconfigure(1, weight=1)
+        dub_box.grid_rowconfigure(2, weight=0)
 
         dub_header = ctk.CTkFrame(dub_box, fg_color="transparent")
         dub_header.grid(row=0, column=0, sticky="ew", padx=8, pady=2)
@@ -948,11 +986,19 @@ class AudioDubbingStudio(ctk.CTk):
         )
         self.btn_reset_dub.pack(side="right", padx=10)
 
-        self.lbl_dub_hover = ctk.CTkLabel(dub_header, text="", font=("Arial", 11, "italic"), text_color="#ffb74d", anchor="w")
-        self.lbl_dub_hover.pack(side="left", padx=10, fill="x", expand=True)
-
         self.dub_canvas_frame = ctk.CTkFrame(dub_box)
         self.dub_canvas_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=2)
+
+        dub_footer = ctk.CTkFrame(dub_box, height=26, fg_color="#181818", corner_radius=4)
+        dub_footer.grid(row=2, column=0, sticky="ew", padx=5, pady=(1, 3))
+        self.lbl_dub_hover = ctk.CTkLabel(
+            dub_footer, 
+            text="Pasa el cursor sobre la onda doblada para inspeccionar el texto...", 
+            font=("Arial", 11), 
+            text_color="#64748b", 
+            anchor="w"
+        )
+        self.lbl_dub_hover.pack(side="left", padx=10, fill="x", expand=True)
 
         # --- ZONA MEDIA: SEGMENTOS GRANULARES ---
         self.mid_scroll = ctk.CTkScrollableFrame(self.tab3, label_text="Ajuste Fino de Segmentos")
@@ -968,7 +1014,7 @@ class AudioDubbingStudio(ctk.CTk):
         self.seek_slider.bind("<ButtonPress-1>", lambda e: setattr(self, 'is_dragging', True))
         self.seek_slider.bind("<ButtonRelease-1>", self._on_seek_release)
 
-        self.lbl_time = ctk.CTkLabel(seek_frame, text="00:00 / 00:00", width=90)
+        self.lbl_time = ctk.CTkLabel(seek_frame, text="0 ms / 0 ms", width=150, font=("Consolas", 12, "bold"))
         self.lbl_time.pack(side="right", padx=10)
 
         # --- ZONA INFERIOR: BOTONES GLOBALES Y EXPORTACIÓN ---
@@ -1168,7 +1214,10 @@ class AudioDubbingStudio(ctk.CTk):
             if self.dub_canvas:
                 self.dub_canvas.draw_idle()
             if hasattr(self, 'lbl_dub_hover'):
-                self.lbl_dub_hover.configure(text="")
+                self.lbl_dub_hover.configure(
+                    text="Pasa el cursor sobre la onda doblada para inspeccionar el texto...",
+                    text_color="#64748b"
+                )
         elif mode == "RAZOR":
             if self.btn_tool_select:
                 self.btn_tool_select.configure(fg_color="#333333")
@@ -1177,7 +1226,10 @@ class AudioDubbingStudio(ctk.CTk):
             if self.dub_canvas:
                 self.dub_canvas.get_tk_widget().configure(cursor="crosshair")
             if hasattr(self, 'lbl_dub_hover'):
-                self.lbl_dub_hover.configure(text="✂️ Modo Cuchilla activo: Haz clic sobre la onda doblada para dividir el audio")
+                self.lbl_dub_hover.configure(
+                    text="✂️ Modo Cuchilla activo: Haz clic sobre la onda doblada para dividir el audio",
+                    text_color="#ff5252"
+                )
 
     def _find_segment_at_ms(self, ms):
         """Busca y retorna el segmento que abarca el instante de tiempo en ms."""
@@ -1435,16 +1487,12 @@ class AudioDubbingStudio(ctk.CTk):
         for w in frame.winfo_children():
             w.destroy()
 
-        fig, (ax_wave, ax_text) = plt.subplots(
-            nrows=2, ncols=1,
-            figsize=(4, 1.4),
-            dpi=80,
-            gridspec_kw={'height_ratios': [2.2, 1.0], 'hspace': 0.06},
-            sharex=True
+        fig, ax_wave = plt.subplots(
+            figsize=(4, 1.2),
+            dpi=80
         )
         fig.patch.set_facecolor('#2b2b2b')
         ax_wave.set_facecolor('#2b2b2b')
-        ax_text.set_facecolor('#222222')
 
         # Eje X en milisegundos reales (0 a total_duration_ms)
         n = len(samples)
@@ -1474,65 +1522,11 @@ class AudioDubbingStudio(ctk.CTk):
                     ax_wave.axvline(x=s_ms, color=cut_color, linestyle='--', linewidth=0.85, alpha=0.85)
                     ax_wave.axvline(x=e_ms, color=cut_color, linestyle='--', linewidth=0.85, alpha=0.85)
 
-        # Cajas de texto en la franja inferior (ax_text)
-        ax_text.set_ylim(0, 1)
-        ax_text.set_xlim(0, self.total_duration_ms)
-        if segments:
-            for seg_item in segments:
-                s_ms = seg_item[0]
-                e_ms = seg_item[1]
-                text_content = seg_item[2] if len(seg_item) > 2 else ""
-                seg_id = seg_item[3] if len(seg_item) > 3 else ""
-                is_selected = bool(is_dubbed and self.selected_segment_id and seg_id == self.selected_segment_id)
-
-                dur_ms = e_ms - s_ms
-                if dur_ms <= 80:
-                    continue
-
-                pad = min(15.0, dur_ms * 0.04)
-                rect_x = s_ms + pad
-                rect_w = max(10.0, dur_ms - (pad * 2))
-
-                box_bg = ('#5c3d00' if is_selected else '#4a2800') if is_dubbed else '#0c3559'
-                box_border = '#ffe600' if is_selected else ('#f97316' if is_dubbed else '#38bdf8')
-                border_w = 2.0 if is_selected else 0.9
-
-                rect = patches.FancyBboxPatch(
-                    (rect_x, 0.1), rect_w, 0.8,
-                    boxstyle="round,pad=0.02,rounding_size=0.1",
-                    facecolor=box_bg,
-                    edgecolor=box_border,
-                    linewidth=border_w,
-                    alpha=0.95,
-                    zorder=4 if is_selected else 2
-                )
-                ax_text.add_patch(rect)
-
-                # Cálculo de truncamiento con elipsis según duración
-                max_chars = max(4, int(dur_ms / 85))
-                clean_text = text_content.strip()
-                if len(clean_text) > max_chars:
-                    display_text = clean_text[:max(1, max_chars - 2)] + "…"
-                else:
-                    display_text = clean_text
-
-                mid_x = s_ms + (dur_ms / 2.0)
-                ax_text.text(
-                    mid_x, 0.5, display_text,
-                    color='#ffe600' if is_selected else '#f1f5f9',
-                    fontsize=7.5,
-                    fontweight='bold' if is_selected else 'normal',
-                    ha='center', va='center',
-                    clip_on=True
-                )
-
         # Cabezal de reproducción (Playhead) - línea vertical visible en amarillo neón (#ffe600)
         cur_pos = self.seek_slider.get()
         cursor_wave = ax_wave.axvline(x=cur_pos, color='#ffe600', linewidth=1.8, zorder=10)
-        cursor_text = ax_text.axvline(x=cur_pos, color='#ffe600', linewidth=1.8, zorder=10)
 
         ax_wave.axis('off')
-        ax_text.axis('off')
         plt.subplots_adjust(left=0.005, right=0.995, top=0.98, bottom=0.02)
 
         canvas = FigureCanvasTkAgg(fig, master=frame)
@@ -1543,23 +1537,22 @@ class AudioDubbingStudio(ctk.CTk):
         # Guardar referencias y conectar eventos
         if is_dubbed:
             self.dub_ax = ax_wave
-            self.dub_ax_text = ax_text
+            self.dub_ax_text = None
             self.dub_canvas = canvas
             self.dub_cursor = cursor_wave
-            self.dub_cursor_text = cursor_text
+            self.dub_cursor_text = None
             if self.active_tool == "RAZOR":
                 canvas.get_tk_widget().configure(cursor="crosshair")
-            # Conectar eventos de manipulación de segmentos (mover, estirar/comprimir)
             canvas.mpl_connect('button_press_event', self._on_timeline_press)
             canvas.mpl_connect('motion_notify_event', self._on_timeline_motion)
             canvas.mpl_connect('button_release_event', self._on_timeline_release)
             canvas.mpl_connect('figure_leave_event', self._on_timeline_leave)
         else:
             self.orig_ax = ax_wave
-            self.orig_ax_text = ax_text
+            self.orig_ax_text = None
             self.orig_canvas = canvas
             self.orig_cursor = cursor_wave
-            self.orig_cursor_text = cursor_text
+            self.orig_cursor_text = None
             canvas.mpl_connect('button_press_event', self._on_waveform_click)
             canvas.mpl_connect('motion_notify_event', self._on_orig_motion)
             canvas.mpl_connect('figure_leave_event', self._on_orig_leave)
@@ -1625,12 +1618,6 @@ class AudioDubbingStudio(ctk.CTk):
                 except Exception:
                     pass
                 self.razor_guide_line = None
-            if self.razor_guide_line_text:
-                try:
-                    self.razor_guide_line_text.remove()
-                except Exception:
-                    pass
-                self.razor_guide_line_text = None
             if self.dub_canvas:
                 self.dub_canvas.draw_idle()
 
@@ -1655,7 +1642,12 @@ class AudioDubbingStudio(ctk.CTk):
                     self.ghost_patch.remove()
                 self.ghost_patch = self.dub_ax.axvspan(new_start, new_end, color='#00e5ff', alpha=0.35, zorder=5)
                 self.dub_canvas.draw_idle()
-                self.lbl_time.configure(text=f"Mover: {int(new_start)}ms → {int(new_end)}ms")
+                if hasattr(self, 'lbl_dub_hover'):
+                    self.lbl_dub_hover.configure(
+                        text=f"↔️ Moviendo [{self.drag_seg_id}]: {int(new_start)} ms → {int(new_end)} ms (duración: {int(dur)} ms)",
+                        text_color="#00e5ff"
+                    )
+                self.lbl_time.configure(text=f"{int(new_start)} ms / {int(self.total_duration_ms)} ms")
 
             elif self.drag_mode == "RESIZE":
                 new_end = max(self.orig_seg_start + 300, self.orig_seg_end + delta_x)
@@ -1671,15 +1663,23 @@ class AudioDubbingStudio(ctk.CTk):
                     self.ghost_patch.remove()
                 self.ghost_patch = self.dub_ax.axvspan(self.orig_seg_start, new_end, color='#ffc107', alpha=0.35, zorder=5)
                 self.dub_canvas.draw_idle()
-                self.lbl_time.configure(text=f"Fin: {int(new_end)}ms | Ratio: {ratio:.2f}x")
+                if hasattr(self, 'lbl_dub_hover'):
+                    self.lbl_dub_hover.configure(
+                        text=f"↔️ Ajustando [{self.drag_seg_id}]: Fin {int(new_end)} ms | Duración: {int(target_dur)} ms (Ratio {ratio:.2f}x)",
+                        text_color="#ffc107"
+                    )
+                self.lbl_time.configure(text=f"{int(new_end)} ms / {int(self.total_duration_ms)} ms")
 
             return
 
-        # CASO 2: Hover (Detección para cambiar cursor a ↔ o ✋ y mostrar texto completo en cabecera)
+        # CASO 2: Hover (Detección para cambiar cursor a ↔ o ✋ y mostrar texto completo en footer inferior)
         if event.xdata is None:
             canvas_widget.configure(cursor="")
             if hasattr(self, 'lbl_dub_hover'):
-                self.lbl_dub_hover.configure(text="")
+                self.lbl_dub_hover.configure(
+                    text="Pasa el cursor sobre la onda doblada para inspeccionar el texto...",
+                    text_color="#64748b"
+                )
             return
 
         hovered_text = ""
@@ -1691,7 +1691,8 @@ class AudioDubbingStudio(ctk.CTk):
             e_ms = seg.get("end_ms", 0)
 
             if s_ms <= event.xdata <= e_ms:
-                hovered_text = f"[{seg.get('id', '')}] {seg.get('translated', '')}"
+                dur = e_ms - s_ms
+                hovered_text = f"💬 [{seg.get('id', '')}] ({s_ms} ms - {e_ms} ms | {dur} ms) | \"{seg.get('translated', '')}\""
 
             if hasattr(self, 'dub_ax') and event.inaxes == self.dub_ax:
                 # Borde derecho: Estirar/Comprimir (↔)
@@ -1703,7 +1704,13 @@ class AudioDubbingStudio(ctk.CTk):
 
         canvas_widget.configure(cursor=cursor_type)
         if hasattr(self, 'lbl_dub_hover'):
-            self.lbl_dub_hover.configure(text=hovered_text)
+            if hovered_text:
+                self.lbl_dub_hover.configure(text=hovered_text, text_color="#ffb74d")
+            else:
+                self.lbl_dub_hover.configure(
+                    text=f"📍 Posición: {int(event.xdata)} ms (silencio / espacio libre)",
+                    text_color="#64748b"
+                )
 
     def _on_timeline_press(self, event):
         """Detecta si el clic es para dividir (cuchilla), seleccionar, mover, estirar o hacer seek."""
@@ -1862,16 +1869,19 @@ class AudioDubbingStudio(ctk.CTk):
             except Exception:
                 pass
             self.razor_guide_line = None
-        if self.razor_guide_line_text:
-            try:
-                self.razor_guide_line_text.remove()
-            except Exception:
-                pass
-            self.razor_guide_line_text = None
         if self.dub_canvas:
             self.dub_canvas.draw_idle()
         if hasattr(self, 'lbl_dub_hover'):
-            self.lbl_dub_hover.configure(text="")
+            if self.active_tool == "RAZOR":
+                self.lbl_dub_hover.configure(
+                    text="✂️ Modo Cuchilla activo: Haz clic sobre la onda doblada para dividir el audio",
+                    text_color="#ff5252"
+                )
+            else:
+                self.lbl_dub_hover.configure(
+                    text="Pasa el cursor sobre la onda doblada para inspeccionar el texto...",
+                    text_color="#64748b"
+                )
 
     def _on_orig_motion(self, event):
         """Muestra el texto completo en español al pasar el mouse sobre la pista original."""
@@ -1879,7 +1889,10 @@ class AudioDubbingStudio(ctk.CTk):
             return
         if event.xdata is None:
             if hasattr(self, 'lbl_orig_hover'):
-                self.lbl_orig_hover.configure(text="")
+                self.lbl_orig_hover.configure(
+                    text="Pasa el cursor sobre la onda para inspeccionar el texto...",
+                    text_color="#64748b"
+                )
             return
 
         x = event.xdata
@@ -1889,31 +1902,35 @@ class AudioDubbingStudio(ctk.CTk):
             s_orig = seg.get("orig_start_ms", seg.get("start_ms", 0))
             e_orig = seg.get("orig_end_ms", seg.get("end_ms", 0))
             if s_orig <= x <= e_orig:
-                hovered_text = f"[{seg.get('id', '')}] {seg.get('original', '')}"
+                dur = e_orig - s_orig
+                hovered_text = f"💬 [{seg.get('id', '')}] ({s_orig} ms - {e_orig} ms | {dur} ms) | \"{seg.get('original', '')}\""
                 break
 
         if hasattr(self, 'lbl_orig_hover'):
-            self.lbl_orig_hover.configure(text=hovered_text)
+            if hovered_text:
+                self.lbl_orig_hover.configure(text=hovered_text, text_color="#38bdf8")
+            else:
+                self.lbl_orig_hover.configure(
+                    text=f"📍 Posición: {int(x)} ms (silencio / fuera de frase)",
+                    text_color="#64748b"
+                )
 
     def _on_orig_leave(self, event):
         """Limpia el texto de preview al salir del canvas original."""
         if hasattr(self, 'lbl_orig_hover'):
-            self.lbl_orig_hover.configure(text="")
+            self.lbl_orig_hover.configure(
+                text="Pasa el cursor sobre la onda para inspeccionar el texto...",
+                text_color="#64748b"
+            )
 
     def _update_playhead(self, current_ms):
-        """Mueve la línea vertical sobre ambas ondas y cajas de texto en tiempo real de forma ultra ligera."""
+        """Mueve la línea vertical sobre ambas ondas en tiempo real de forma ultra ligera."""
         try:
-            if self.orig_canvas:
-                if self.orig_cursor:
-                    self.orig_cursor.set_xdata([current_ms, current_ms])
-                if self.orig_cursor_text:
-                    self.orig_cursor_text.set_xdata([current_ms, current_ms])
+            if self.orig_canvas and self.orig_cursor:
+                self.orig_cursor.set_xdata([current_ms, current_ms])
                 self.orig_canvas.draw_idle()
-            if self.dub_canvas:
-                if self.dub_cursor:
-                    self.dub_cursor.set_xdata([current_ms, current_ms])
-                if self.dub_cursor_text:
-                    self.dub_cursor_text.set_xdata([current_ms, current_ms])
+            if self.dub_canvas and self.dub_cursor:
+                self.dub_cursor.set_xdata([current_ms, current_ms])
                 self.dub_canvas.draw_idle()
         except Exception:
             pass
@@ -1947,9 +1964,9 @@ class AudioDubbingStudio(ctk.CTk):
             self._restart_global_playback()
 
     def _update_time_label(self):
-        cur = int(self.seek_slider.get() / 1000)
-        tot = int(self.total_duration_ms / 1000)
-        self.lbl_time.configure(text=f"{cur//60:02d}:{cur%60:02d} / {tot//60:02d}:{tot%60:02d}")
+        cur_ms = int(self.seek_slider.get())
+        tot_ms = int(self.total_duration_ms)
+        self.lbl_time.configure(text=f"{cur_ms} ms / {tot_ms} ms")
 
     def _toggle_play_global(self):
         if not self.processor:
