@@ -5,6 +5,7 @@ import time
 import math
 import shutil
 import io
+import queue
 import threading
 import subprocess
 import tkinter as tk
@@ -325,12 +326,32 @@ class AudioDubbingStudio(ctk.CTk):
         self.ghost_patch = None        # Patch visual de previsualización
         self.drag_has_moved = False    # Para distinguir clic simple de arrastre
 
-
+        # Cola para comunicación thread-safe entre hilos secundarios y la interfaz gráfica
+        self._gui_queue = queue.Queue()
+        self._poll_gui_queue()
 
         self._build_top_bar()
         self._build_tabs()
         self._check_pinokio_status_async()
         self._load_initial_project()
+
+    def run_on_ui_thread(self, callback):
+        """Encola una función para ejecutarse de forma segura en el hilo principal de Tkinter."""
+        self._gui_queue.put(callback)
+
+    def _poll_gui_queue(self):
+        """Revisa periódicamente la cola de la interfaz y ejecuta callbacks en el hilo principal."""
+        try:
+            while True:
+                task = self._gui_queue.get_nowait()
+                try:
+                    task()
+                except Exception as e:
+                    print(f"[Error UI Thread] {e}")
+        except queue.Empty:
+            pass
+        finally:
+            self.after(35, self._poll_gui_queue)
 
     # ==========================================================
     # 1. BARRA SUPERIOR: PROYECTOS Y ESTADO DE PINOKIO
@@ -365,7 +386,7 @@ class AudioDubbingStudio(ctk.CTk):
         def _check():
             online = self.pinokio.check_connection()
             self.pinokio_connected = online
-            self.after(0, lambda: self._update_pinokio_ui(online))
+            self.run_on_ui_thread(lambda: self._update_pinokio_ui(online))
         threading.Thread(target=_check, daemon=True).start()
 
     def _update_pinokio_ui(self, online):
@@ -522,10 +543,13 @@ class AudioDubbingStudio(ctk.CTk):
         def _worker():
             try:
                 audio = self.project_paths["audio_file"]
-                text = self.aligner.transcribe_to_plain_text(audio, lambda s: self.after(0, lambda: self.lbl_t1_status.configure(text=s)))
-                self.after(0, lambda: self._on_transcribe_success(text))
+                text = self.aligner.transcribe_to_plain_text(
+                    audio, 
+                    lambda s: self.run_on_ui_thread(lambda: self.lbl_t1_status.configure(text=s))
+                )
+                self.run_on_ui_thread(lambda: self._on_transcribe_success(text))
             except Exception as e:
-                self.after(0, lambda: self._on_transcribe_error(str(e)))
+                self.run_on_ui_thread(lambda: self._on_transcribe_error(str(e)))
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -562,6 +586,9 @@ class AudioDubbingStudio(ctk.CTk):
                 raise ValueError("El JSON debe ser una lista de segmentos [ { ... }, { ... } ]")
             self.segments_data = data
             self.pm.save_project_metadata(self.current_project, data)
+            if self.processor:
+                self.processor.metadata = data
+                self.processor.recalculate_end_times()
             self._refresh_tab2()
             self._refresh_tab3()
             messagebox.showinfo("Guardado", f"Se guardaron {len(data)} segmentos en el proyecto.")
@@ -593,11 +620,13 @@ class AudioDubbingStudio(ctk.CTk):
         def _worker():
             try:
                 aligned_data, duration_ms = self.aligner.align_timestamps(
-                    audio, data, lambda s: self.after(0, lambda: self.lbl_t1_align_status.configure(text=s))
+                    audio, 
+                    data, 
+                    lambda s: self.run_on_ui_thread(lambda: self.lbl_t1_align_status.configure(text=s))
                 )
-                self.after(0, lambda: self._on_align_success(aligned_data, duration_ms))
+                self.run_on_ui_thread(lambda: self._on_align_success(aligned_data, duration_ms))
             except Exception as e:
-                self.after(0, lambda: self._on_align_error(str(e)))
+                self.run_on_ui_thread(lambda: self._on_align_error(str(e)))
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -605,6 +634,9 @@ class AudioDubbingStudio(ctk.CTk):
         self.btn_align.configure(state="normal", text="⏱️ Sincronizar Tiempos (Whisper)")
         self.segments_data = aligned_data
         self.pm.save_project_metadata(self.current_project, aligned_data)
+        if self.processor:
+            self.processor.metadata = aligned_data
+            self.processor.recalculate_end_times()
         self._refresh_tab1()
         self._refresh_tab2()
         self._refresh_tab3()
@@ -691,9 +723,9 @@ class AudioDubbingStudio(ctk.CTk):
         def _worker():
             try:
                 self._generate_segment_voice(seg)
-                self.after(0, lambda: card.set_done() if card else None)
+                self.run_on_ui_thread(lambda: card.set_done() if card else None)
             except Exception as e:
-                self.after(0, lambda: messagebox.showerror("Error en Doblaje", f"Fallo al generar {seg['id']}: {e}"))
+                self.run_on_ui_thread(lambda: messagebox.showerror("Error en Doblaje", f"Fallo al generar {seg['id']}: {e}"))
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -713,16 +745,16 @@ class AudioDubbingStudio(ctk.CTk):
             for i, seg in enumerate(self.segments_data):
                 card = self.card_widgets.get(seg['id'])
                 if card:
-                    self.after(0, card.set_processing)
-                self.after(0, lambda idx=i+1: self.lbl_t2_progress.configure(text=f"Generando {idx} de {total}..."))
+                    self.run_on_ui_thread(card.set_processing)
+                self.run_on_ui_thread(lambda idx=i+1: self.lbl_t2_progress.configure(text=f"Generando {idx} de {total}..."))
                 try:
                     self._generate_segment_voice(seg)
                     if card:
-                        self.after(0, card.set_done)
+                        self.run_on_ui_thread(card.set_done)
                 except Exception as e:
                     print(f"[ERROR] Error generando segmento {seg['id']}: {e}")
 
-            self.after(0, self._on_dubbing_all_finished)
+            self.run_on_ui_thread(self._on_dubbing_all_finished)
 
         threading.Thread(target=_worker, daemon=True).start()
 
