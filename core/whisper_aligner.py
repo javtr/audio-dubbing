@@ -33,18 +33,22 @@ class WhisperAligner:
         return " ".join(full_text)
 
     def generate_gemini_prompt(self, spanish_text):
-        """Genera el prompt listo para copiar y pegar en Gemini Web con directrices de concisión y control de longitud."""
+        """Genera el prompt listo para copiar y pegar en Gemini Web con directrices de ajuste de longitud equilibrado."""
         prompt = f"""Actúa como un director de doblaje profesional y traductor audiovisual experto en adaptación de guiones (Script Adaptation & Dubbing Localization).
 A continuación tienes la transcripción en español de un video para ser doblado al inglés mediante clonación de voz por IA (TTS).
 
-🎯 OBJETIVO CRÍTICO: TRADUCCIÓN CONCISA Y CONTROL DE LONGITUD (EVITAR FRASES LARGAS)
-Uno de los problemas más graves en el doblaje con IA es generar traducciones en inglés demasiado largas, verbosas o infladas. Cuando la frase en inglés tiene demasiadas palabras, el software de audio se ve obligado a acelerar excesivamente la voz (atempo), arruinando la naturalidad, dicción y fluidez.
+🎯 OBJETIVO CRÍTICO: AJUSTE DE LONGITUD EQUILIBRADO (NI MUY LARGO NI MUY CORTO)
+En el doblaje audiovisual, la duración del audio en inglés debe coincidir lo más estrechamente posible con el tiempo del video original en español:
+- Si la traducción en inglés es DEMASIADO LARGA (más palabras que en español), el audio se ve obligado a acelerarse excesivamente, arruinando la dicción y la naturalidad.
+- Si la traducción en inglés es DEMASIADO CORTA o resumida (por ejemplo, 19 palabras en inglés para 53 en español), el audio termina demasiado rápido dejando vacíos incómodos y perdiendo información valiosa.
 
 ⚠️ REGLAS OBLIGATORIAS DE ADAPTACIÓN:
-1. **Brevedad y Concisión Absoluta:** La traducción al inglés debe ser DIRECTA, CONCISA y NATURAL. El número de palabras en inglés DEBE SER MENOR O IGUAL al del español. NUNCA generes frases en inglés con más palabras que su correspondiente en español.
-2. **PROHIBIDO EL RELLENO (NO FILLERS):** NO agregues frases introductorias infladas ni conectores innecesarios (PROHIBIDO: "So let's take a closer look and see", "what you need to understand is", "as we can clearly observe", "keep in mind that", "it is worth noting that", etc.). Ve directamente a la idea principal con un inglés dinámico y conciso.
-3. **Preferencia de Silencio vs Aceleración:** Es mil veces preferible que la frase en inglés sea corta y deje un pequeño respiro de silencio natural, a que sea kilométrica y obligue a acelerar el audio a velocidades no humanas.
-4. **Segmentación:** Cada fragmento debe ser una oración o pensamiento coherente completo.
+1. **Ajuste Máximo sin Pasarse (Rango Ideal: 80% a 100% de palabras):**
+   - Ajusta la redacción en inglés para que tenga una extensión **lo más cercana posible a la frase original en español, pero tratando de NO sobrepasarla**.
+   - La meta es que cada fragmento en inglés contenga aproximadamente entre el **80% y el 100%** del conteo de palabras de su frase original en español (por ejemplo, si el español tiene 50 palabras, el inglés debe tener entre 40 y 50 palabras).
+2. **NO RESUMAS NI OMITAS INFORMACIÓN:** No es un resumen. Debes traducir TODOS los conceptos, detalles, explicaciones y matices expresados en el original, manteniendo una redacción rica, natural y completa.
+3. **NO INFLES CON RELLENO ARTIFICIAL:** Evita muletillas innecesarias o frases vacías introductorias solo por rellenar. Usa oraciones bien construidas en inglés nativo que expresen fielmente todo el contenido original.
+4. **Segmentación Coherente:** Cada fragmento debe representar una oración o idea completa con sentido gramatical y puntuación adecuada.
 5. **Tono Emocional:** Asigna a cada fragmento uno de estos 4 tonos exactos según el contexto:
    - "Conversational": Tono casual, neutro, informal o introductorio.
    - "Explanatory": Tono didáctico, explicando conceptos técnicos o pasos con calma.
@@ -57,14 +61,14 @@ Devuelve ÚNICAMENTE un bloque de código JSON válido con esta estructura exact
   {{
     "id": "seg-0",
     "original": "<frase en español>",
-    "translated": "<traducción concisa y directa al inglés, sin rellenos innecesarios>",
+    "translated": "<traducción completa y adaptada en inglés con ~80-100% de palabras del original>",
     "tone": "Conversational",
     "filename": "segment_000.wav"
   }},
   {{
     "id": "seg-1",
     "original": "<frase en español>",
-    "translated": "<traducción concisa y directa al inglés, sin rellenos innecesarios>",
+    "translated": "<traducción completa y adaptada en inglés con ~80-100% de palabras del original>",
     "tone": "Explanatory",
     "filename": "segment_001.wav"
   }}

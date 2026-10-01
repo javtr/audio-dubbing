@@ -201,43 +201,42 @@ class SegmentCard(ctk.CTkFrame):
         self.update_status()
 
     def update_density_metrics(self):
-        try:
-            start = int(self.ent_start.get())
-            end = int(self.ent_end.get())
-            duration_sec = (end - start) / 1000.0
-        except ValueError:
-            self.lbl_density.configure(text="⚠️ Tiempos inválidos", text_color="#e57373")
-            return
-
         orig_text = self.data.get('original', '').strip()
         orig_words = len(orig_text.split()) if orig_text else 0
 
         trans_text = self.txt_translated.get("1.0", "end-1c").strip()
         trans_words = len(trans_text.split()) if trans_text else 0
 
-        if duration_sec <= 0:
-            self.lbl_density.configure(text="⚠️ Duración inválida (<= 0s)", text_color="#e57373")
+        if orig_words == 0:
+            if trans_words == 0:
+                self.lbl_density.configure(text="0 / 0 (0%) | Sin texto", text_color="#aaaaaa")
+            else:
+                self.lbl_density.configure(text=f"{trans_words} / 0 | Sin original", text_color="#aaaaaa")
             return
 
         if trans_words == 0:
-            self.lbl_density.configure(text=f"[{duration_sec:.1f}s] Original: {orig_words} pal. | ⚠️ Sin traducción", text_color="#aaaaaa")
+            self.lbl_density.configure(text=f"0 / {orig_words} (0%) | Sin traducción", text_color="#aaaaaa")
             return
 
-        wps = trans_words / duration_sec
-        wpm = int(wps * 60)
+        pct = (trans_words / orig_words) * 100.0
 
-        # Rango conversacional estándar en inglés: ~2.0 a 2.8 palabras/segundo (120-170 WPM)
-        if wps < 1.7:
-            info = f"[{duration_sec:.1f}s] {trans_words} pal. ({wps:.1f} pal/s - {wpm} WPM) | ⚠️ Corta (ES: {orig_words} pal.) - Sobrará silencio"
-            color = "#ffb74d"
-        elif wps > 3.2:
-            info = f"[{duration_sec:.1f}s] {trans_words} pal. ({wps:.1f} pal/s - {wpm} WPM) | ⚠️ Larga (ES: {orig_words} pal.) - Deberá acelerarse"
+        if pct < 55.0:
+            clasif = "Muy corto"
             color = "#e57373"
-        else:
-            info = f"[{duration_sec:.1f}s] {trans_words} pal. ({wps:.1f} pal/s - {wpm} WPM) | ✅ Ritmo equilibrado (ES: {orig_words} pal.)"
+        elif pct < 75.0:
+            clasif = "Corto"
+            color = "#ffb74d"
+        elif pct <= 105.0:
+            clasif = "Bien"
             color = "#81c784"
+        elif pct <= 125.0:
+            clasif = "Largo"
+            color = "#ffb74d"
+        else:
+            clasif = "Muy largo"
+            color = "#e57373"
 
-        self.lbl_density.configure(text=info, text_color=color)
+        self.lbl_density.configure(text=f"{trans_words} / {orig_words} ({pct:.0f}%) | {clasif}", text_color=color)
 
     def _play_slice(self):
         try:
