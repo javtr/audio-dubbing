@@ -23,25 +23,27 @@ __pycache__/
 *.m4a
 *.flac
 *.ogg
+*.mp4
+*.mkv
+*.mov
+*.avi
+*.webm
 *.dll
 
 # ==========================================
 # Datos del Proyecto (Archivos dinámicos)
 # ==========================================
-# Ignoramos el contenido de estas carpetas porque son dinámicos
-# Si quieres mantener las carpetas vacías en git, añade un archivo '.gitkeep' dentro de ellas.
-files/original/*
-!files/original/.gitkeep
-
-files/audios/*
-!files/audios/.gitkeep
+proyectos/*
+!proyectos/.gitkeep
 
 # Mantenemos examples.json pero ignoramos los audios de referencia si son pesados
+assets/clone_examples/*.wav
 files/clone_examples/*.wav
 
 # Ignoramos el JSON generado automáticamente por la app
 files/original/secciones.json
 metadata.json
+
 
 # ==========================================
 # Configuraciones de Entorno e IDEs
