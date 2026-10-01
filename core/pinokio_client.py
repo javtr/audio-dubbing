@@ -22,9 +22,9 @@ class PinokioClient:
             self._client = Client(self.base_url)
         return self._client
 
-    def generate_voice_clone(self, ref_audio_path, ref_text, target_text, output_path, model_size="1.7B"):
+    def generate_voice_clone(self, ref_audio_path, ref_text, target_text, output_path, model_size="0.6B"):
         """
-        Envía la solicitud de clonación de voz a CosyVoice vía Gradio.
+        Envía la solicitud de clonación de voz a TTS vía Gradio en Pinokio.
         Guarda el audio generado en output_path.
         """
         if not os.path.exists(ref_audio_path):

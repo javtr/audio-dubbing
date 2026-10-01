@@ -317,6 +317,7 @@ class AudioDubbingStudio(ctk.CTk):
         self.segments_data = []
         self.master_segments = []
         self.pinokio_connected = False
+        self.selected_tts_model = "0.6B"
 
         # Variables de reproducción y mezcla (Pestaña 3)
         self.mute_original = False
@@ -723,8 +724,21 @@ class AudioDubbingStudio(ctk.CTk):
         btn_reload = ctk.CTkButton(top_frame, text="🔄 Recargar", width=100, command=self._refresh_tab2)
         btn_reload.pack(side="left", padx=5)
 
+        # Switcher de Modelo TTS (0.6B vs 1.7B)
+        model_frame = ctk.CTkFrame(top_frame, fg_color="transparent")
+        model_frame.pack(side="left", padx=15)
+        ctk.CTkLabel(model_frame, text="Modelo TTS:", font=("Arial", 12, "bold")).pack(side="left", padx=(0, 6))
+
+        self.seg_tts_model = ctk.CTkSegmentedButton(
+            model_frame,
+            values=["0.6B (Rápido)", "1.7B (Calidad)"],
+            command=self._on_tts_model_changed
+        )
+        self.seg_tts_model.set("0.6B (Rápido)")
+        self.seg_tts_model.pack(side="left")
+
         self.lbl_t2_progress = ctk.CTkLabel(top_frame, text="", font=("Arial", 12), text_color="#aaaaaa")
-        self.lbl_t2_progress.pack(side="left", padx=20)
+        self.lbl_t2_progress.pack(side="left", padx=15)
 
         # Contenedor desplazable de tarjetas
         self.scroll_cards = ctk.CTkScrollableFrame(self.tab2, label_text="Segmentos a Doblar")
@@ -773,9 +787,12 @@ class AudioDubbingStudio(ctk.CTk):
             self._refresh_tab2()
             self._refresh_tab3()
 
+    def _on_tts_model_changed(self, value):
+        self.selected_tts_model = "0.6B" if "0.6B" in value else "1.7B"
+
     def _start_single_dubbing(self, seg):
         if not self.pinokio.check_connection():
-            messagebox.showerror("Pinokio Desconectado", "No se puede conectar a Pinokio en http://127.0.0.1:7860.\nAsegúrate de tener iniciada la app de CosyVoice en Pinokio.")
+            messagebox.showerror("Pinokio Desconectado", "No se puede conectar a Pinokio en http://127.0.0.1:7860.\nAsegúrate de tener iniciada la app de TTS en Pinokio.")
             return
 
         card = self.card_widgets.get(seg['id'])
@@ -793,7 +810,7 @@ class AudioDubbingStudio(ctk.CTk):
 
     def _start_dubbing_all(self):
         if not self.pinokio.check_connection():
-            messagebox.showerror("Pinokio Desconectado", "No se puede conectar a Pinokio en http://127.0.0.1:7860.\nAsegúrate de tener iniciada la app de CosyVoice en Pinokio.")
+            messagebox.showerror("Pinokio Desconectado", "No se puede conectar a Pinokio en http://127.0.0.1:7860.\nAsegúrate de tener iniciada la app de TTS en Pinokio.")
             return
 
         if not self.segments_data:
@@ -836,11 +853,13 @@ class AudioDubbingStudio(ctk.CTk):
         except Exception:
             pass
 
+        model_size = "0.6B" if "0.6B" in getattr(self, 'selected_tts_model', '0.6B') else "1.7B"
         self.pinokio.generate_voice_clone(
             ref_audio_path=ref_audio_path,
             ref_text=ref_text,
             target_text=seg['translated'],
-            output_path=output_path
+            output_path=output_path,
+            model_size=model_size
         )
 
     def _on_dubbing_all_finished(self):
