@@ -357,7 +357,8 @@ class AudioDubbingStudio(ctk.CTk):
         # Herramientas de edición de clips (Cuchilla / Razor y Selección)
         self.active_tool = "SELECT"     # "SELECT" o "RAZOR"
         self.selected_segment_id = None # ID del segmento seleccionado
-        self.razor_guide_line = None    # Línea vertical roja guía de corte
+        self.razor_guide_line = None    # Línea vertical roja guía de corte (eje de onda)
+        self.razor_guide_line_text = None # Línea vertical roja guía de corte (eje de texto)
         self.btn_tool_select = None
         self.btn_tool_razor = None
         self.btn_delete_seg = None
@@ -1140,8 +1141,14 @@ class AudioDubbingStudio(ctk.CTk):
                 except Exception:
                     pass
                 self.razor_guide_line = None
-                if self.dub_canvas:
-                    self.dub_canvas.draw_idle()
+            if self.razor_guide_line_text:
+                try:
+                    self.razor_guide_line_text.remove()
+                except Exception:
+                    pass
+                self.razor_guide_line_text = None
+            if self.dub_canvas:
+                self.dub_canvas.draw_idle()
             if hasattr(self, 'lbl_dub_hover'):
                 self.lbl_dub_hover.configure(text="")
         elif mode == "RAZOR":
@@ -1203,26 +1210,28 @@ class AudioDubbingStudio(ctk.CTk):
             audio = AudioSegment.silent(duration=seg_dur)
             audio_len = seg_dur
 
-        # Punto de corte exacto en el archivo de audio
+        # Punto de corte exacto en el archivo de audio:
         if offset_ms >= audio_len:
             # El usuario está cortando en el silencio posterior a la voz
             part1_audio = audio
             part2_dur = max(10, end_ms - cut_ms)
             part2_audio = AudioSegment.silent(duration=part2_dur)
+            is_silence_cut_end = True
+            is_silence_cut_start = False
         elif offset_ms <= 0:
-            # El usuario está cortando justo al inicio
+            # El usuario está cortando justo al inicio (silencio previo)
             part1_dur = max(10, cut_ms - start_ms)
             part1_audio = AudioSegment.silent(duration=part1_dur)
             part2_audio = audio
+            is_silence_cut_end = False
+            is_silence_cut_start = True
         else:
-            # El corte cae dentro de los datos del audio
-            if seg_dur > 0 and abs(seg_dur - audio_len) > 100:
-                cut_point = int(offset_ms * (audio_len / seg_dur))
-            else:
-                cut_point = offset_ms
-            cut_point = max(1, min(audio_len - 1, cut_point))
+            # El corte cae dentro de los datos del audio: corte 1:1 exacto en milisegundos reales
+            cut_point = max(1, min(audio_len - 1, offset_ms))
             part1_audio = audio[:cut_point]
             part2_audio = audio[cut_point:]
+            is_silence_cut_end = False
+            is_silence_cut_start = False
 
         # Asegurar que ambos audios tengan al menos 10 ms para ser exportables sin error
         if len(part1_audio) == 0:
@@ -1235,7 +1244,8 @@ class AudioDubbingStudio(ctk.CTk):
         idx = 1
         part1_name = f"{base}_a{ext}"
         part2_name = f"{base}_b{ext}"
-        while os.path.exists(os.path.join(self.project_paths["audios_dir"], part2_name)):
+        while os.path.exists(os.path.join(self.project_paths["audios_dir"], part1_name)) or \
+              os.path.exists(os.path.join(self.project_paths["audios_dir"], part2_name)):
             part1_name = f"{base}_p{idx}a{ext}"
             part2_name = f"{base}_p{idx}b{ext}"
             idx += 1
@@ -1266,6 +1276,10 @@ class AudioDubbingStudio(ctk.CTk):
         seg_a["end_ms"] = cut_ms
         seg_a["orig_start_ms"] = orig_s
         seg_a["orig_end_ms"] = orig_mid
+        seg_a["ratio"] = 1.0
+        if is_silence_cut_start:
+            seg_a["translated"] = "[Silencio]"
+            seg_a["original"] = "[Silencio]"
 
         seg_b = dict(segment)
         seg_b["id"] = f"{segment['id']}_b"
@@ -1274,6 +1288,10 @@ class AudioDubbingStudio(ctk.CTk):
         seg_b["end_ms"] = end_ms
         seg_b["orig_start_ms"] = orig_mid
         seg_b["orig_end_ms"] = orig_e
+        seg_b["ratio"] = 1.0
+        if is_silence_cut_end:
+            seg_b["translated"] = "[Silencio]"
+            seg_b["original"] = "[Silencio]"
 
         # Reemplazar segmento original por ambas mitades
         self.processor.metadata[seg_idx:seg_idx + 1] = [seg_a, seg_b]
@@ -1537,21 +1555,37 @@ class AudioDubbingStudio(ctk.CTk):
 
         # CASO 0: Modo Cuchilla (Razor Tool)
         if self.active_tool == "RAZOR":
-            if event.xdata is None or (hasattr(self, 'dub_ax') and event.inaxes != self.dub_ax):
+            valid_axes = [ax for ax in (getattr(self, 'dub_ax', None), getattr(self, 'dub_text_ax', None)) if ax is not None]
+            if event.xdata is None or (valid_axes and event.inaxes not in valid_axes):
                 if self.razor_guide_line:
                     try:
                         self.razor_guide_line.remove()
                     except Exception:
                         pass
                     self.razor_guide_line = None
+                if self.razor_guide_line_text:
+                    try:
+                        self.razor_guide_line_text.remove()
+                    except Exception:
+                        pass
+                    self.razor_guide_line_text = None
+                if self.dub_canvas:
                     self.dub_canvas.draw_idle()
                 return
 
             cut_ms = int(event.xdata)
-            if self.razor_guide_line is None:
-                self.razor_guide_line = self.dub_ax.axvline(x=cut_ms, color='#ff1744', linestyle='--', linewidth=1.5, zorder=25)
-            else:
-                self.razor_guide_line.set_xdata([cut_ms, cut_ms])
+            if hasattr(self, 'dub_ax') and self.dub_ax is not None:
+                if self.razor_guide_line is None:
+                    self.razor_guide_line = self.dub_ax.axvline(x=cut_ms, color='#ff1744', linestyle='--', linewidth=1.5, zorder=25)
+                else:
+                    self.razor_guide_line.set_xdata([cut_ms, cut_ms])
+
+            if hasattr(self, 'dub_text_ax') and self.dub_text_ax is not None:
+                if self.razor_guide_line_text is None:
+                    self.razor_guide_line_text = self.dub_text_ax.axvline(x=cut_ms, color='#ff1744', linestyle='--', linewidth=1.5, zorder=25)
+                else:
+                    self.razor_guide_line_text.set_xdata([cut_ms, cut_ms])
+
             self.dub_canvas.draw_idle()
 
             target_seg = self._find_segment_at_ms(cut_ms)
@@ -1565,14 +1599,22 @@ class AudioDubbingStudio(ctk.CTk):
                     self.lbl_dub_hover.configure(text=f"✂️ Cuchilla en {cut_ms} ms (fuera de segmento)")
             return
 
-        # Limpiar línea guía si no estamos en modo cuchilla
-        if self.razor_guide_line:
-            try:
-                self.razor_guide_line.remove()
-            except Exception:
-                pass
-            self.razor_guide_line = None
-            self.dub_canvas.draw_idle()
+        # Limpiar líneas guía si no estamos en modo cuchilla
+        if self.razor_guide_line or self.razor_guide_line_text:
+            if self.razor_guide_line:
+                try:
+                    self.razor_guide_line.remove()
+                except Exception:
+                    pass
+                self.razor_guide_line = None
+            if self.razor_guide_line_text:
+                try:
+                    self.razor_guide_line_text.remove()
+                except Exception:
+                    pass
+                self.razor_guide_line_text = None
+            if self.dub_canvas:
+                self.dub_canvas.draw_idle()
 
         # CASO 1: Arrastre Activo (El usuario tiene el botón presionado y mueve el mouse)
         if self.drag_mode is not None:
@@ -1802,8 +1844,14 @@ class AudioDubbingStudio(ctk.CTk):
             except Exception:
                 pass
             self.razor_guide_line = None
-            if self.dub_canvas:
-                self.dub_canvas.draw_idle()
+        if self.razor_guide_line_text:
+            try:
+                self.razor_guide_line_text.remove()
+            except Exception:
+                pass
+            self.razor_guide_line_text = None
+        if self.dub_canvas:
+            self.dub_canvas.draw_idle()
         if hasattr(self, 'lbl_dub_hover'):
             self.lbl_dub_hover.configure(text="")
 
