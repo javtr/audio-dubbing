@@ -885,8 +885,10 @@ class AudioDubbingStudio(ctk.CTk):
         self._draw_waveform_canvas(self.dub_canvas_frame, mix_data, '#ff7f0e', is_dubbed=True, segments=segs_info)
 
     def _draw_waveform_canvas(self, frame, samples, color, is_dubbed=False, segments=None):
+        import numpy as np
         for w in frame.winfo_children():
             w.destroy()
+
 
         fig, ax = plt.subplots(figsize=(4, 0.9), dpi=80)
         fig.patch.set_facecolor('#2b2b2b')
