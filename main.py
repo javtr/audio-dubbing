@@ -353,6 +353,23 @@ class AudioDubbingStudio(ctk.CTk):
         self.ghost_patch = None        # Patch visual de previsualización
         self.drag_has_moved = False    # Para distinguir clic simple de arrastre
 
+        # Herramientas de edición de clips (Cuchilla / Razor y Selección)
+        self.active_tool = "SELECT"     # "SELECT" o "RAZOR"
+        self.selected_segment_id = None # ID del segmento seleccionado
+        self.razor_guide_line = None    # Línea vertical roja guía de corte
+        self.btn_tool_select = None
+        self.btn_tool_razor = None
+        self.btn_split_playhead = None
+        self.btn_delete_seg = None
+
+        # Atajos de teclado para edición
+        self.bind("<Delete>", self._on_key_delete)
+        self.bind("<BackSpace>", self._on_key_delete)
+        self.bind("<c>", self._on_key_shortcut)
+        self.bind("<C>", self._on_key_shortcut)
+        self.bind("<v>", self._on_key_shortcut)
+        self.bind("<V>", self._on_key_shortcut)
+
         # Cola para comunicación thread-safe entre hilos secundarios y la interfaz gráfica
         self._gui_queue = queue.Queue()
         self._poll_gui_queue()
@@ -862,10 +879,39 @@ class AudioDubbingStudio(ctk.CTk):
         dub_header.grid(row=0, column=0, sticky="ew", padx=8, pady=2)
         ctk.CTkLabel(dub_header, text="Pista Doblada", font=("Arial", 12, "bold")).pack(side="left")
         self.btn_mute_dub = ctk.CTkButton(dub_header, text="Mute", width=55, height=24, command=self._toggle_mute_dub)
-        self.btn_mute_dub.pack(side="left", padx=10)
-        self.slider_vol_dub = ctk.CTkSlider(dub_header, from_=0, to=2, width=120)
+        self.btn_mute_dub.pack(side="left", padx=8)
+        self.slider_vol_dub = ctk.CTkSlider(dub_header, from_=0, to=2, width=100)
         self.slider_vol_dub.set(1.0)
-        self.slider_vol_dub.pack(side="left", padx=5)
+        self.slider_vol_dub.pack(side="left", padx=4)
+
+        # Barra de Herramientas de Edición (Mover, Cuchilla, Corte en Cabezal, Suprimir)
+        self.btn_tool_select = ctk.CTkButton(
+            dub_header, text="✋ Mover", width=68, height=24,
+            fg_color="#1f6aa5", hover_color="#144870",
+            command=lambda: self._set_tool_mode("SELECT")
+        )
+        self.btn_tool_select.pack(side="left", padx=(8, 2))
+
+        self.btn_tool_razor = ctk.CTkButton(
+            dub_header, text="✂️ Cuchilla", width=78, height=24,
+            fg_color="#333333", hover_color="#c62828",
+            command=lambda: self._set_tool_mode("RAZOR")
+        )
+        self.btn_tool_razor.pack(side="left", padx=2)
+
+        self.btn_split_playhead = ctk.CTkButton(
+            dub_header, text="✂️ En Cabezal", width=90, height=24,
+            fg_color="#333333", hover_color="#e65100",
+            command=self._split_at_playhead
+        )
+        self.btn_split_playhead.pack(side="left", padx=2)
+
+        self.btn_delete_seg = ctk.CTkButton(
+            dub_header, text="🗑️ Suprimir", width=78, height=24,
+            fg_color="#2b2b2b", hover_color="#822727", state="disabled",
+            command=self._delete_selected_segment
+        )
+        self.btn_delete_seg.pack(side="left", padx=2)
 
         self.btn_reset_dub = ctk.CTkButton(
             dub_header, text="↺ Resetear a Original", width=145, height=24,
@@ -875,7 +921,7 @@ class AudioDubbingStudio(ctk.CTk):
         self.btn_reset_dub.pack(side="right", padx=10)
 
         self.lbl_dub_hover = ctk.CTkLabel(dub_header, text="", font=("Arial", 11, "italic"), text_color="#ffb74d", anchor="w")
-        self.lbl_dub_hover.pack(side="left", padx=15, fill="x", expand=True)
+        self.lbl_dub_hover.pack(side="left", padx=10, fill="x", expand=True)
 
         self.dub_canvas_frame = ctk.CTkFrame(dub_box)
         self.dub_canvas_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=2)
@@ -921,6 +967,7 @@ class AudioDubbingStudio(ctk.CTk):
         for w in self.mid_scroll.winfo_children():
             w.destroy()
         self.segment_rows.clear()
+        self._update_delete_button_state()
 
         if not self.processor or not self.processor.original_audio:
             return
@@ -940,7 +987,12 @@ class AudioDubbingStudio(ctk.CTk):
         self.btn_export_video.configure(state="normal" if has_video else "disabled")
 
     def _add_segment_row(self, segment, ratio):
-        row = ctk.CTkFrame(self.mid_scroll)
+        is_selected = (self.selected_segment_id == segment.get("id"))
+        row = ctk.CTkFrame(
+            self.mid_scroll,
+            border_width=2 if is_selected else 0,
+            border_color="#ffe600" if is_selected else "#3d3d3d"
+        )
         row.pack(fill="x", pady=3, padx=5)
         row.grid_columnconfigure(2, weight=1)
 
@@ -948,11 +1000,13 @@ class AudioDubbingStudio(ctk.CTk):
         btn_play.configure(command=lambda s=segment, b=btn_play: self._toggle_play_segment_slice(s, b))
         btn_play.grid(row=0, column=0, padx=5, pady=4)
 
-        lbl_file = ctk.CTkLabel(row, text=segment.get("filename", ""), width=95, anchor="w")
+        lbl_file = ctk.CTkLabel(row, text=segment.get("filename", ""), width=95, anchor="w", cursor="hand2")
         lbl_file.grid(row=0, column=1, padx=4, pady=4)
+        lbl_file.bind("<Button-1>", lambda e, s=segment: self._select_segment_from_ui(s))
 
-        lbl_text = ctk.CTkLabel(row, text=segment.get("translated", ""), wraplength=400, justify="left", anchor="w")
+        lbl_text = ctk.CTkLabel(row, text=segment.get("translated", ""), wraplength=400, justify="left", anchor="w", cursor="hand2")
         lbl_text.grid(row=0, column=2, padx=8, pady=4, sticky="ew")
+        lbl_text.bind("<Button-1>", lambda e, s=segment: self._select_segment_from_ui(s))
 
         ctrls = ctk.CTkFrame(row, fg_color="transparent")
         ctrls.grid(row=0, column=3, padx=5, pady=4, sticky="e")
@@ -1037,10 +1091,229 @@ class AudioDubbingStudio(ctk.CTk):
             except Exception as e:
                 print(f"[WARN] Error procesando reseteo para {fname}: {e}")
 
+        self.selected_segment_id = None
+        self._update_delete_button_state()
         self.processor.recalculate_end_times()
         self.pm.save_project_metadata(self.current_project, self.processor.metadata)
         self._refresh_tab3()
         messagebox.showinfo("Reseteado", "Todos los segmentos han sido restaurados a sus posiciones originales.")
+
+    # ----------------------------------------------------------
+    # HERRAMIENTAS DE EDICIÓN: CUCHILLA (RAZOR) Y SUPRESIÓN
+    # ----------------------------------------------------------
+    def _set_tool_mode(self, mode):
+        """Alterna entre el modo Puntero/Selección ('SELECT') y el modo Cuchilla ('RAZOR')."""
+        self.active_tool = mode
+        if mode == "SELECT":
+            if self.btn_tool_select:
+                self.btn_tool_select.configure(fg_color="#1f6aa5")
+            if self.btn_tool_razor:
+                self.btn_tool_razor.configure(fg_color="#333333")
+            if self.dub_canvas:
+                self.dub_canvas.get_tk_widget().configure(cursor="")
+            if self.razor_guide_line:
+                try:
+                    self.razor_guide_line.remove()
+                except Exception:
+                    pass
+                self.razor_guide_line = None
+                if self.dub_canvas:
+                    self.dub_canvas.draw_idle()
+            if hasattr(self, 'lbl_dub_hover'):
+                self.lbl_dub_hover.configure(text="")
+        elif mode == "RAZOR":
+            if self.btn_tool_select:
+                self.btn_tool_select.configure(fg_color="#333333")
+            if self.btn_tool_razor:
+                self.btn_tool_razor.configure(fg_color="#c62828")
+            if self.dub_canvas:
+                self.dub_canvas.get_tk_widget().configure(cursor="crosshair")
+            if hasattr(self, 'lbl_dub_hover'):
+                self.lbl_dub_hover.configure(text="✂️ Modo Cuchilla activo: Haz clic sobre la onda doblada para dividir el audio")
+
+    def _find_segment_at_ms(self, ms):
+        """Busca y retorna el segmento que abarca el instante de tiempo en ms."""
+        if not self.processor or not self.processor.metadata:
+            return None
+        for seg in self.processor.metadata:
+            s = seg.get("start_ms", 0)
+            e = seg.get("end_ms", 0)
+            if s <= ms <= e:
+                return seg
+        return None
+
+    def _split_segment(self, segment, cut_ms):
+        """Divide el archivo de audio del segmento en dos fragmentos y los añade al timeline."""
+        if not self.processor or not self.project_paths or not segment:
+            return
+
+        start_ms = segment.get("start_ms", 0)
+        offset_ms = int(cut_ms - start_ms)
+
+        fname = segment.get("filename", "")
+        fpath = os.path.join(self.project_paths["audios_dir"], fname)
+        if not os.path.exists(fpath):
+            messagebox.showwarning("Atención", f"No se encontró el archivo de audio: {fname}")
+            return
+
+        # Cargar audio en memoria o desde disco
+        audio = self.processor.processed_segments.get(fname)
+        if not audio:
+            try:
+                audio = AudioSegment.from_file(fpath)
+            except Exception as e:
+                messagebox.showerror("Error", f"No se pudo cargar el audio para cortar: {e}")
+                return
+
+        audio_len = len(audio)
+        if offset_ms < 60 or offset_ms > (audio_len - 60):
+            if hasattr(self, 'lbl_dub_hover'):
+                self.lbl_dub_hover.configure(text="⚠️ Corte demasiado cercano al extremo (mínimo 60 ms)")
+            return
+
+        part1_audio = audio[:offset_ms]
+        part2_audio = audio[offset_ms:]
+
+        # Generar nombres únicos de archivo
+        base, ext = os.path.splitext(fname)
+        idx = 1
+        part1_name = f"{base}_a{ext}"
+        part2_name = f"{base}_b{ext}"
+        while os.path.exists(os.path.join(self.project_paths["audios_dir"], part2_name)):
+            part1_name = f"{base}_p{idx}a{ext}"
+            part2_name = f"{base}_p{idx}b{ext}"
+            idx += 1
+
+        part1_path = os.path.join(self.project_paths["audios_dir"], part1_name)
+        part2_path = os.path.join(self.project_paths["audios_dir"], part2_name)
+
+        try:
+            part1_audio.export(part1_path, format="wav")
+            part2_audio.export(part2_path, format="wav")
+        except Exception as e:
+            messagebox.showerror("Error al exportar", f"No se pudieron guardar las partes cortadas: {e}")
+            return
+
+        # Calcular proporción de las marcas de anclaje originales
+        orig_s = segment.get("orig_start_ms", start_ms)
+        orig_e = segment.get("orig_end_ms", segment.get("end_ms", start_ms + audio_len))
+        orig_dur = max(0, orig_e - orig_s)
+        orig_mid = int(orig_s + (orig_dur * (offset_ms / max(1, audio_len))))
+
+        # Crear los dos nuevos segmentos
+        seg_idx = self.processor.metadata.index(segment)
+
+        seg_a = dict(segment)
+        seg_a["id"] = f"{segment['id']}_a"
+        seg_a["filename"] = part1_name
+        seg_a["start_ms"] = start_ms
+        seg_a["end_ms"] = start_ms + len(part1_audio)
+        seg_a["orig_start_ms"] = orig_s
+        seg_a["orig_end_ms"] = orig_mid
+
+        seg_b = dict(segment)
+        seg_b["id"] = f"{segment['id']}_b"
+        seg_b["filename"] = part2_name
+        seg_b["start_ms"] = start_ms + len(part1_audio)
+        seg_b["end_ms"] = start_ms + len(part1_audio) + len(part2_audio)
+        seg_b["orig_start_ms"] = orig_mid
+        seg_b["orig_end_ms"] = orig_e
+
+        # Reemplazar segmento original por ambas mitades
+        self.processor.metadata[seg_idx:seg_idx + 1] = [seg_a, seg_b]
+        self.processor.processed_segments[part1_name] = part1_audio
+        self.processor.processed_segments[part2_name] = part2_audio
+
+        # Seleccionar automáticamente la parte B
+        self.selected_segment_id = seg_b["id"]
+
+        self.processor.recalculate_end_times()
+        self.pm.save_project_metadata(self.current_project, self.processor.metadata)
+        self._refresh_tab3()
+        self._refresh_tab2()
+        self._update_delete_button_state()
+        if hasattr(self, 'lbl_dub_hover'):
+            self.lbl_dub_hover.configure(text=f"✂️ Segmento dividido en {cut_ms} ms: [{seg_a['id']}] y [{seg_b['id']}]")
+
+    def _split_at_playhead(self):
+        """Divide el segmento que se encuentra en la posición actual del cursor de reproducción."""
+        if not self.processor or not self.processor.metadata:
+            return
+        cur_pos = int(self.seek_slider.get())
+        seg = self._find_segment_at_ms(cur_pos)
+        if not seg:
+            messagebox.showinfo("Corte en Cabezal", f"No hay ningún segmento de audio bajo el cabezal ({cur_pos} ms).")
+            return
+        self._split_segment(seg, cur_pos)
+
+    def _delete_selected_segment(self):
+        """Elimina el segmento seleccionado del timeline liberando su espacio."""
+        if not self.selected_segment_id or not self.processor:
+            return
+
+        target = None
+        for s in self.processor.metadata:
+            if s.get("id") == self.selected_segment_id:
+                target = s
+                break
+
+        if not target:
+            return
+
+        # Remover de la lista de metadatos y de caché
+        self.processor.metadata.remove(target)
+        fname = target.get("filename")
+        if fname in self.processor.processed_segments:
+            del self.processor.processed_segments[fname]
+
+        deleted_id = self.selected_segment_id
+        self.selected_segment_id = None
+        self._update_delete_button_state()
+
+        self.processor.recalculate_end_times()
+        self.pm.save_project_metadata(self.current_project, self.processor.metadata)
+        self._refresh_tab3()
+        self._refresh_tab2()
+
+        if hasattr(self, 'lbl_dub_hover'):
+            self.lbl_dub_hover.configure(text=f"🗑️ Fragmento [{deleted_id}] eliminado. Espacio liberado.")
+
+    def _update_delete_button_state(self):
+        """Habilita o deshabilita el botón de suprimir según haya un segmento seleccionado."""
+        if not hasattr(self, 'btn_delete_seg') or self.btn_delete_seg is None:
+            return
+        if self.selected_segment_id:
+            self.btn_delete_seg.configure(state="normal", fg_color="#c62828")
+        else:
+            self.btn_delete_seg.configure(state="disabled", fg_color="#2b2b2b")
+
+    def _on_key_delete(self, event):
+        """Manejador del atajo Delete/BackSpace para suprimir el segmento seleccionado."""
+        widget = self.focus_get()
+        if isinstance(widget, (tk.Entry, tk.Text, ctk.CTkEntry, ctk.CTkTextbox)):
+            return
+        self._delete_selected_segment()
+
+    def _on_key_shortcut(self, event):
+        """Manejador de los atajos de teclado 'C' (cuchilla) y 'V' (selección)."""
+        widget = self.focus_get()
+        if isinstance(widget, (tk.Entry, tk.Text, ctk.CTkEntry, ctk.CTkTextbox)):
+            return
+        char = event.char.lower() if hasattr(event, 'char') else ''
+        if char == "c":
+            self._set_tool_mode("RAZOR")
+        elif char == "v":
+            self._set_tool_mode("SELECT")
+
+    def _select_segment_from_ui(self, segment):
+        """Permite seleccionar un segmento al hacer clic en su fila en la lista inferior."""
+        if not segment:
+            return
+        prev = self.selected_segment_id
+        self.selected_segment_id = segment.get("id")
+        self._update_delete_button_state()
+        if prev != self.selected_segment_id:
+            self._update_waveforms()
 
     def _update_waveforms(self):
         if not self.processor or not self.processor.original_audio:
@@ -1058,18 +1331,18 @@ class AudioDubbingStudio(ctk.CTk):
         for s in self.processor.metadata:
             s_orig = s.get("orig_start_ms", s.get("start_ms", 0))
             e_orig = s.get("orig_end_ms", s.get("end_ms", 0))
-            orig_segs_info.append((s_orig, e_orig, s.get("original", "")))
+            orig_segs_info.append((s_orig, e_orig, s.get("original", ""), s.get("id", "")))
 
-        # 2. Marcas dinámicas del audio doblado (Editables con texto traducido)
+        # 2. Marcas dinámicas del audio doblado (Editables con texto traducido e ID)
         dub_segs_info = []
         for s in self.processor.metadata:
-            dub_segs_info.append((s.get("start_ms", 0), s.get("end_ms", 0), s.get("translated", "")))
+            dub_segs_info.append((s.get("start_ms", 0), s.get("end_ms", 0), s.get("translated", ""), s.get("id", "")))
 
         # Forma de onda original (Celeste de alto contraste #38bdf8 con marcas fijas de corte en español - NUNCA SE MUEVEN)
         orig_data = self.processor.get_waveform_data(self.processor.original_audio)
         self._draw_waveform_canvas(self.orig_canvas_frame, orig_data, '#38bdf8', is_dubbed=False, segments=orig_segs_info, cut_color='#ff5252')
 
-        # Forma de onda doblada (Naranja con marcas dinámicas de doblaje)
+        # Forma de onda doblada (Naranja con marcas dinámicas de doblaje y resaltado de selección)
         mix_data = self.processor.get_waveform_data(mix)
         self._draw_waveform_canvas(self.dub_canvas_frame, mix_data, '#ff7f0e', is_dubbed=True, segments=dub_segs_info, cut_color='#ff5252')
 
@@ -1104,21 +1377,29 @@ class AudioDubbingStudio(ctk.CTk):
             for seg_item in segments:
                 s_ms = seg_item[0]
                 e_ms = seg_item[1]
-                ax_wave.axvspan(s_ms, e_ms, color='white', alpha=0.06)
-                ax_wave.axvline(x=s_ms, color=cut_color, linestyle='--', linewidth=0.85, alpha=0.85)
-                ax_wave.axvline(x=e_ms, color=cut_color, linestyle='--', linewidth=0.85, alpha=0.85)
+                seg_id = seg_item[3] if len(seg_item) > 3 else ""
+                is_selected = bool(is_dubbed and self.selected_segment_id and seg_id == self.selected_segment_id)
+
+                if is_selected:
+                    # Resaltado amarillo neón para clip seleccionado
+                    ax_wave.axvspan(s_ms, e_ms, color='#ffe600', alpha=0.22, zorder=3)
+                    ax_wave.axvline(x=s_ms, color='#ffe600', linestyle='-', linewidth=2.0, zorder=6)
+                    ax_wave.axvline(x=e_ms, color='#ffe600', linestyle='-', linewidth=2.0, zorder=6)
+                else:
+                    ax_wave.axvspan(s_ms, e_ms, color='white', alpha=0.06)
+                    ax_wave.axvline(x=s_ms, color=cut_color, linestyle='--', linewidth=0.85, alpha=0.85)
+                    ax_wave.axvline(x=e_ms, color=cut_color, linestyle='--', linewidth=0.85, alpha=0.85)
 
         # Cajas de texto en la franja inferior (ax_text)
         ax_text.set_ylim(0, 1)
         ax_text.set_xlim(0, self.total_duration_ms)
         if segments:
-            box_bg = '#4a2800' if is_dubbed else '#0c3559'
-            box_border = '#f97316' if is_dubbed else '#38bdf8'
-
             for seg_item in segments:
                 s_ms = seg_item[0]
                 e_ms = seg_item[1]
                 text_content = seg_item[2] if len(seg_item) > 2 else ""
+                seg_id = seg_item[3] if len(seg_item) > 3 else ""
+                is_selected = bool(is_dubbed and self.selected_segment_id and seg_id == self.selected_segment_id)
 
                 dur_ms = e_ms - s_ms
                 if dur_ms <= 80:
@@ -1128,13 +1409,18 @@ class AudioDubbingStudio(ctk.CTk):
                 rect_x = s_ms + pad
                 rect_w = max(10.0, dur_ms - (pad * 2))
 
+                box_bg = ('#5c3d00' if is_selected else '#4a2800') if is_dubbed else '#0c3559'
+                box_border = '#ffe600' if is_selected else ('#f97316' if is_dubbed else '#38bdf8')
+                border_w = 2.0 if is_selected else 0.9
+
                 rect = patches.FancyBboxPatch(
                     (rect_x, 0.1), rect_w, 0.8,
                     boxstyle="round,pad=0.02,rounding_size=0.1",
                     facecolor=box_bg,
                     edgecolor=box_border,
-                    linewidth=0.9,
-                    alpha=0.95
+                    linewidth=border_w,
+                    alpha=0.95,
+                    zorder=4 if is_selected else 2
                 )
                 ax_text.add_patch(rect)
 
@@ -1149,8 +1435,9 @@ class AudioDubbingStudio(ctk.CTk):
                 mid_x = s_ms + (dur_ms / 2.0)
                 ax_text.text(
                     mid_x, 0.5, display_text,
-                    color='#f1f5f9',
+                    color='#ffe600' if is_selected else '#f1f5f9',
                     fontsize=7.5,
+                    fontweight='bold' if is_selected else 'normal',
                     ha='center', va='center',
                     clip_on=True
                 )
@@ -1176,6 +1463,8 @@ class AudioDubbingStudio(ctk.CTk):
             self.dub_canvas = canvas
             self.dub_cursor = cursor_wave
             self.dub_cursor_text = cursor_text
+            if self.active_tool == "RAZOR":
+                canvas.get_tk_widget().configure(cursor="crosshair")
             # Conectar eventos de manipulación de segmentos (mover, estirar/comprimir)
             canvas.mpl_connect('button_press_event', self._on_timeline_press)
             canvas.mpl_connect('motion_notify_event', self._on_timeline_motion)
@@ -1192,11 +1481,50 @@ class AudioDubbingStudio(ctk.CTk):
             canvas.mpl_connect('figure_leave_event', self._on_orig_leave)
 
     def _on_timeline_motion(self, event):
-        """Maneja el hover (cambio de cursor) y el arrastre activo (mover o estirar)."""
+        """Maneja el hover (cambio de cursor), el modo cuchilla y el arrastre activo (mover o estirar)."""
         if not self.processor or not self.processor.metadata or not self.dub_canvas:
             return
 
         canvas_widget = self.dub_canvas.get_tk_widget()
+
+        # CASO 0: Modo Cuchilla (Razor Tool)
+        if self.active_tool == "RAZOR":
+            if event.xdata is None or (hasattr(self, 'dub_ax') and event.inaxes != self.dub_ax):
+                if self.razor_guide_line:
+                    try:
+                        self.razor_guide_line.remove()
+                    except Exception:
+                        pass
+                    self.razor_guide_line = None
+                    self.dub_canvas.draw_idle()
+                return
+
+            cut_ms = int(event.xdata)
+            if self.razor_guide_line is None:
+                self.razor_guide_line = self.dub_ax.axvline(x=cut_ms, color='#ff1744', linestyle='--', linewidth=1.5, zorder=25)
+            else:
+                self.razor_guide_line.set_xdata([cut_ms, cut_ms])
+            self.dub_canvas.draw_idle()
+
+            target_seg = self._find_segment_at_ms(cut_ms)
+            if target_seg:
+                if hasattr(self, 'lbl_dub_hover'):
+                    self.lbl_dub_hover.configure(
+                        text=f"✂️ Cuchilla en {cut_ms} ms | Clic para dividir [{target_seg.get('id', '')}]"
+                    )
+            else:
+                if hasattr(self, 'lbl_dub_hover'):
+                    self.lbl_dub_hover.configure(text=f"✂️ Cuchilla en {cut_ms} ms (fuera de segmento)")
+            return
+
+        # Limpiar línea guía si no estamos en modo cuchilla
+        if self.razor_guide_line:
+            try:
+                self.razor_guide_line.remove()
+            except Exception:
+                pass
+            self.razor_guide_line = None
+            self.dub_canvas.draw_idle()
 
         # CASO 1: Arrastre Activo (El usuario tiene el botón presionado y mueve el mouse)
         if self.drag_mode is not None:
@@ -1270,9 +1598,30 @@ class AudioDubbingStudio(ctk.CTk):
             self.lbl_dub_hover.configure(text=hovered_text)
 
     def _on_timeline_press(self, event):
-        """Detecta si el clic es para iniciar mover, estirar o hacer seek."""
+        """Detecta si el clic es para dividir (cuchilla), seleccionar, mover, estirar o hacer seek."""
         if event.button != 1 or event.xdata is None or not self.processor:
             return
+
+        click_x = event.xdata
+        click_ms = int(click_x)
+
+        # 1. MODO CUCHILLA: Dividir el segmento cliqueado inmediatamente
+        if self.active_tool == "RAZOR":
+            target_seg = self._find_segment_at_ms(click_ms)
+            if target_seg:
+                self._split_segment(target_seg, click_ms)
+            return
+
+        # 2. MODO SELECCIÓN: Identificar si se seleccionó un segmento
+        target_seg = self._find_segment_at_ms(click_ms)
+        prev_selected = self.selected_segment_id
+        if target_seg:
+            self.selected_segment_id = target_seg.get("id")
+        else:
+            self.selected_segment_id = None
+        self._update_delete_button_state()
+        if prev_selected != self.selected_segment_id:
+            self._update_waveforms()
 
         # Si el clic no fue en el eje de la onda de audio (ax_wave), hacer seek directamente
         if hasattr(self, 'dub_ax') and event.inaxes != self.dub_ax:
@@ -1281,7 +1630,6 @@ class AudioDubbingStudio(ctk.CTk):
             return
 
         tol = max(200.0, self.total_duration_ms * 0.015)
-        click_x = event.xdata
 
         for seg in self.processor.metadata:
             s_ms = seg.get("start_ms", 0)
@@ -1296,7 +1644,6 @@ class AudioDubbingStudio(ctk.CTk):
                 self.orig_seg_end = e_ms
                 self.drag_has_moved = False
 
-                # Calcular duración pura del archivo generado
                 fname = seg.get("filename", "")
                 fpath = os.path.join(self.project_paths["audios_dir"], fname)
                 if os.path.exists(fpath):
@@ -1340,7 +1687,10 @@ class AudioDubbingStudio(ctk.CTk):
                 self.dub_canvas.draw_idle()
 
         if self.dub_canvas:
-            self.dub_canvas.get_tk_widget().configure(cursor="")
+            if self.active_tool == "RAZOR":
+                self.dub_canvas.get_tk_widget().configure(cursor="crosshair")
+            else:
+                self.dub_canvas.get_tk_widget().configure(cursor="")
 
         mode = self.drag_mode
         seg = self.drag_segment
@@ -1394,7 +1744,18 @@ class AudioDubbingStudio(ctk.CTk):
     def _on_timeline_leave(self, event):
         """Restaura el cursor si el mouse sale del canvas y limpia el preview."""
         if self.drag_mode is None and self.dub_canvas:
-            self.dub_canvas.get_tk_widget().configure(cursor="")
+            if self.active_tool == "RAZOR":
+                self.dub_canvas.get_tk_widget().configure(cursor="crosshair")
+            else:
+                self.dub_canvas.get_tk_widget().configure(cursor="")
+        if self.razor_guide_line:
+            try:
+                self.razor_guide_line.remove()
+            except Exception:
+                pass
+            self.razor_guide_line = None
+            if self.dub_canvas:
+                self.dub_canvas.draw_idle()
         if hasattr(self, 'lbl_dub_hover'):
             self.lbl_dub_hover.configure(text="")
 
