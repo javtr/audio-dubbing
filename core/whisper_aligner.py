@@ -132,6 +132,9 @@ Instrucciones:
             if i == 0:
                 item["start_ms"] = 0
 
+            # Guardar ancla de referencia original (Ground Truth fija)
+            item["orig_start_ms"] = item["start_ms"]
+
         # Asignar end_ms basándose en el inicio del siguiente segmento
         for i in range(len(gemini_data)):
             if i < len(gemini_data) - 1:
@@ -140,8 +143,12 @@ Instrucciones:
             else:
                 gemini_data[i]["end_ms"] = audio_duration_ms
 
+            # Guardar ancla de fin original fija
+            gemini_data[i]["orig_end_ms"] = gemini_data[i]["end_ms"]
+
             # Asegurar nombre de archivo
             if "filename" not in gemini_data[i] or not gemini_data[i]["filename"]:
                 gemini_data[i]["filename"] = f"segment_{i:03d}.wav"
+
 
         return gemini_data, audio_duration_ms

@@ -359,8 +359,16 @@ class AudioDubbingStudio(ctk.CTk):
         self.project_paths = self.pm.get_project_paths(project_name)
         self.segments_data = self.pm.load_project_metadata(project_name)
 
+        # Asegurar anclas fijas originales inmutables
+        for seg in self.segments_data:
+            if "orig_start_ms" not in seg:
+                seg["orig_start_ms"] = seg.get("start_ms", 0)
+            if "orig_end_ms" not in seg:
+                seg["orig_end_ms"] = seg.get("end_ms", 0)
+
         # Inicializar AudioProcessor
         if self.project_paths.get("audio_file"):
+
             self.processor = AudioProcessor(
                 self.project_paths["audio_file"],
                 self.project_paths["audios_dir"],
@@ -745,6 +753,14 @@ class AudioDubbingStudio(ctk.CTk):
         self.slider_vol_dub.set(1.0)
         self.slider_vol_dub.pack(side="left", padx=5)
 
+        self.btn_reset_dub = ctk.CTkButton(
+            dub_header, text="↺ Resetear a Original", width=145, height=24,
+            fg_color="#a83232", hover_color="#822727",
+            command=self._reset_dubbed_positions
+        )
+        self.btn_reset_dub.pack(side="right", padx=10)
+
+
         self.dub_canvas_frame = ctk.CTkFrame(dub_box)
         self.dub_canvas_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=2)
 
@@ -872,6 +888,44 @@ class AudioDubbingStudio(ctk.CTk):
         except ValueError:
             messagebox.showerror("Error", "Los tiempos de inicio deben ser números enteros válidos.")
 
+    def _reset_dubbed_positions(self):
+        """Restaura todos los segmentos doblados a sus marcas y duraciones originales en español."""
+        if not self.processor or not self.processor.metadata:
+            return
+
+        if not messagebox.askyesno("Confirmar Reseteo", "¿Deseas restaurar todos los segmentos a sus posiciones originales en español?"):
+            return
+
+        for seg in self.processor.metadata:
+            orig_s = seg.get("orig_start_ms", seg.get("start_ms", 0))
+            orig_e = seg.get("orig_end_ms", seg.get("end_ms", 0))
+            seg["start_ms"] = orig_s
+            seg["end_ms"] = orig_e
+
+            # Obtener duración pura del archivo y calcular ratio original
+            fname = seg.get("filename", "")
+            fpath = os.path.join(self.project_paths["audios_dir"], fname)
+            raw_dur = 0
+            if os.path.exists(fpath):
+                try:
+                    raw_dur = len(AudioSegment.from_file(fpath))
+                except Exception:
+                    pass
+
+            target_dur = max(300, orig_e - orig_s)
+            orig_ratio = raw_dur / target_dur if (raw_dur > 0 and target_dur > 0) else 1.0
+            orig_ratio = max(0.5, min(orig_ratio, 5.0))
+
+            try:
+                self.processor.process_segment(seg, manual_ratio=orig_ratio)
+            except Exception as e:
+                print(f"[WARN] Error procesando reseteo para {fname}: {e}")
+
+        self.processor.recalculate_end_times()
+        self.pm.save_project_metadata(self.current_project, self.processor.metadata)
+        self._refresh_tab3()
+        messagebox.showinfo("Reseteado", "Todos los segmentos han sido restaurados a sus posiciones originales.")
+
     def _update_waveforms(self):
         if not self.processor or not self.processor.original_audio:
             return
@@ -883,20 +937,27 @@ class AudioDubbingStudio(ctk.CTk):
         self.seek_slider.configure(to=self.total_duration_ms)
         self._update_time_label()
 
-        # Lista de marcas de cortes de segmentos
-        segs_info = []
+        # 1. Marcas fijas del audio original en español (Ground Truth inmutable)
+        orig_segs_info = []
         for s in self.processor.metadata:
-            segs_info.append((s.get("start_ms", 0), s.get("end_ms", 0)))
+            s_orig = s.get("orig_start_ms", s.get("start_ms", 0))
+            e_orig = s.get("orig_end_ms", s.get("end_ms", 0))
+            orig_segs_info.append((s_orig, e_orig))
 
-        # Forma de onda original (Azul con marcas de corte en español)
+        # 2. Marcas dinámicas del audio doblado (Editables)
+        dub_segs_info = []
+        for s in self.processor.metadata:
+            dub_segs_info.append((s.get("start_ms", 0), s.get("end_ms", 0)))
+
+        # Forma de onda original (Azul con marcas fijas de corte en español - NUNCA SE MUEVEN)
         orig_data = self.processor.get_waveform_data(self.processor.original_audio)
-        self._draw_waveform_canvas(self.orig_canvas_frame, orig_data, '#1f77b4', is_dubbed=False, segments=segs_info)
+        self._draw_waveform_canvas(self.orig_canvas_frame, orig_data, '#1f77b4', is_dubbed=False, segments=orig_segs_info, cut_color='#ff5252')
 
-        # Forma de onda doblada (Naranja con marcas de corte)
+        # Forma de onda doblada (Naranja con marcas dinámicas de doblaje)
         mix_data = self.processor.get_waveform_data(mix)
-        self._draw_waveform_canvas(self.dub_canvas_frame, mix_data, '#ff7f0e', is_dubbed=True, segments=segs_info)
+        self._draw_waveform_canvas(self.dub_canvas_frame, mix_data, '#ff7f0e', is_dubbed=True, segments=dub_segs_info, cut_color='#ff5252')
 
-    def _draw_waveform_canvas(self, frame, samples, color, is_dubbed=False, segments=None):
+    def _draw_waveform_canvas(self, frame, samples, color, is_dubbed=False, segments=None, cut_color='#ff5252'):
         import numpy as np
         for w in frame.winfo_children():
             w.destroy()
@@ -915,12 +976,13 @@ class AudioDubbingStudio(ctk.CTk):
                 ax.set_ylim(-max_val * 1.15, max_val * 1.15)
         ax.set_xlim(0, self.total_duration_ms)
 
-        # Marcas de cortes de cada frase (líneas rojas discontinuas y sombreado translúcido)
+        # Marcas de cortes de cada frase (líneas discontinuas y sombreado translúcido)
         if segments:
             for s_ms, e_ms in segments:
                 ax.axvspan(s_ms, e_ms, color='white', alpha=0.08)
-                ax.axvline(x=s_ms, color='#ff5252', linestyle='--', linewidth=0.9, alpha=0.85)
-                ax.axvline(x=e_ms, color='#ff5252', linestyle='--', linewidth=0.9, alpha=0.85)
+                ax.axvline(x=s_ms, color=cut_color, linestyle='--', linewidth=0.9, alpha=0.85)
+                ax.axvline(x=e_ms, color=cut_color, linestyle='--', linewidth=0.9, alpha=0.85)
+
 
 
         # Cabezal de reproducción (Playhead) - línea vertical visible en cyan neón (#00e5ff)
