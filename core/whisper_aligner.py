@@ -57,23 +57,29 @@ class WhisperAligner:
             self.unload_model()
 
     def generate_gemini_prompt(self, spanish_text):
-        """Genera el prompt listo para copiar y pegar en Gemini Web con directrices de ajuste de longitud equilibrado."""
+        """Genera el prompt listo para copiar y pegar en Gemini Web con directrices estrictas de conteo y balance de palabras (90%-110%)."""
         prompt = f"""Actúa como un director de doblaje profesional y traductor audiovisual experto en adaptación de guiones (Script Adaptation & Dubbing Localization).
 A continuación tienes la transcripción en español de un video para ser doblado al inglés mediante clonación de voz por IA (TTS).
 
-🎯 OBJETIVO CRÍTICO: AJUSTE DE LONGITUD EQUILIBRADO (NI MUY LARGO NI MUY CORTO)
-En el doblaje audiovisual, la duración del audio en inglés debe coincidir lo más estrechamente posible con el tiempo del video original en español:
-- Si la traducción en inglés es DEMASIADO LARGA (más palabras que en español), el audio se ve obligado a acelerarse excesivamente, arruinando la dicción y la naturalidad.
-- Si la traducción en inglés es DEMASIADO CORTA o resumida (por ejemplo, 19 palabras en inglés para 53 en español), el audio termina demasiado rápido dejando vacíos incómodos y perdiendo información valiosa.
+🎯 REGLA DE ORO: BALANCE Y CONTEO ESTRICTO DE PALABRAS (RANGO OBLIGATORIO: 90% A 110%)
+En el doblaje por IA, la duración del audio sintetizado depende directamente de la cantidad de palabras:
+- Si la adaptación tiene MENOS DEL 90% de palabras: El audio en inglés termina demasiado rápido, dejando vacíos incómodos de silencio en el video y perdiendo información valiosa.
+- Si la adaptación tiene MÁS DEL 110% de palabras: El audio se ve obligado a acelerarse de manera artificial y excesiva, arruinando la dicción y la naturalidad del locutor.
+- RANGO VÁLIDO Y OBLIGATORIO: La traducción en inglés DEBE tener entre el 90% y el 110% del número de palabras de la frase original en español. El sistema marcará como error cualquier segmento que quede por debajo del 90%.
 
-⚠️ REGLAS OBLIGATORIAS DE ADAPTACIÓN:
-1. **Ajuste Máximo sin Pasarse (Rango Ideal: 80% a 100% de palabras):**
-   - Ajusta la redacción en inglés para que tenga una extensión **lo más cercana posible a la frase original en español, pero tratando de NO sobrepasarla**.
-   - La meta es que cada fragmento en inglés contenga aproximadamente entre el **80% y el 100%** del conteo de palabras de su frase original en español (por ejemplo, si el español tiene 50 palabras, el inglés debe tener entre 40 y 50 palabras).
-2. **NO RESUMAS NI OMITAS INFORMACIÓN:** No es un resumen. Debes traducir TODOS los conceptos, detalles, explicaciones y matices expresados en el original, manteniendo una redacción rica, natural y completa.
-3. **NO INFLES CON RELLENO ARTIFICIAL:** Evita muletillas innecesarias o frases vacías introductorias solo por rellenar. Usa oraciones bien construidas en inglés nativo que expresen fielmente todo el contenido original.
-4. **Segmentación Coherente:** Cada fragmento debe representar una oración o idea completa con sentido gramatical y puntuación adecuada.
-5. **Tono Emocional:** Asigna a cada fragmento uno de estos 4 tonos exactos según el contexto:
+📐 PROCEDIMIENTO OBLIGATORIO DE CONTEO Y CÁLCULO PARA CADA SEGMENTO:
+Antes de redactar la versión final de cada fragmento, DEBES seguir este proceso:
+1. Cuenta las palabras exactas de la frase en español (ejemplo: 40 palabras).
+2. Calcula tu rango objetivo de palabras en inglés: mínimo 90% (36 palabras) y máximo 110% (44 palabras).
+3. Redacta la adaptación en inglés y cuenta cuántas palabras obtuviste:
+   - Si tu traducción en inglés quedó por debajo del 90% (< 36 palabras): ¡NO LA ENTREGUES ASÍ! Es demasiado corta. Amplía la redacción explicando con mayor detalle, utilizando vocabulario técnico preciso, oraciones completas y descripciones ricas sin perder el sentido.
+   - Si tu traducción superó el 110% (> 44 palabras): Condensa levemente oraciones secundarias sin omitir datos esenciales.
+
+⚠️ OTRAS REGLAS OBLIGATORIAS:
+1. **NO RESUMAS NI OMITAS INFORMACIÓN:** No es un resumen. Debes traducir TODOS los conceptos, detalles, pasos técnicos, advertencias y matices expresados en el original.
+2. **NO INFLES CON RELLENO ARTIFICIAL:** No uses muletillas vacías repetitivas. Usa inglés fluido, natural y descriptivo propio de un locutor nativo experto en la materia.
+3. **Segmentación Coherente:** Cada fragmento debe representar una oración o idea completa con puntuación adecuada.
+4. **Tono Emocional:** Asigna a cada fragmento uno de estos 4 tonos exactos según el contexto:
    - "Conversational": Tono casual, neutro, informal o introductorio.
    - "Explanatory": Tono didáctico, explicando conceptos técnicos o pasos con calma.
    - "Effusive": Tono enérgico, de advertencia, sorpresa, entusiasmo o énfasis marcado.
@@ -85,14 +91,14 @@ Devuelve ÚNICAMENTE un bloque de código JSON válido con esta estructura exact
   {{
     "id": "seg-0",
     "original": "<frase en español>",
-    "translated": "<traducción completa y adaptada en inglés con ~80-100% de palabras del original>",
+    "translated": "<adaptación en inglés verificando que tenga entre el 90% y el 110% de palabras>",
     "tone": "Conversational",
     "filename": "segment_000.wav"
   }},
   {{
     "id": "seg-1",
     "original": "<frase en español>",
-    "translated": "<traducción completa y adaptada en inglés con ~80-100% de palabras del original>",
+    "translated": "<adaptación en inglés verificando que tenga entre el 90% y el 110% de palabras>",
     "tone": "Explanatory",
     "filename": "segment_001.wav"
   }}

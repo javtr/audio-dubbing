@@ -124,13 +124,13 @@ class SegmentCard(ctk.CTkFrame):
 
         pct = (trans_words / orig_words) * 100.0
 
-        if pct < 55.0:
+        if pct < 70.0:
             clasif = "Muy corto"
             color = "#e57373"
-        elif pct < 75.0:
+        elif pct < 90.0:
             clasif = "Corto"
             color = "#ffb74d"
-        elif pct <= 105.0:
+        elif pct <= 110.0:
             clasif = "Bien"
             color = "#81c784"
         elif pct <= 125.0:
