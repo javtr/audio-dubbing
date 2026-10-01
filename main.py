@@ -128,6 +128,10 @@ class SegmentCard(ctk.CTkFrame):
         self.txt_translated.grid(row=1, column=0, pady=(5, 0), sticky="ew")
         self.txt_translated.insert("1.0", self.data.get('translated', ''))
 
+        # Indicador de densidad y ritmo rítmico (isocronía)
+        self.lbl_density = ctk.CTkLabel(text_frame, text="", font=("Arial", 11, "bold"), anchor="w", justify="left")
+        self.lbl_density.grid(row=2, column=0, pady=(3, 0), sticky="w")
+
         # Controles de tiempo y tono
         ctrl_frame = ctk.CTkFrame(self, fg_color="transparent")
         ctrl_frame.grid(row=2, column=0, columnspan=2, padx=10, pady=5, sticky="ew")
@@ -146,6 +150,11 @@ class SegmentCard(ctk.CTkFrame):
         self.opt_tone = ctk.CTkOptionMenu(ctrl_frame, values=["Conversational", "Explanatory", "Effusive", "Serious"], width=140)
         self.opt_tone.set(self.data.get('tone', 'Conversational'))
         self.opt_tone.pack(side="left", padx=5)
+
+        # Eventos para cálculo de densidad en tiempo real
+        self.txt_translated.bind("<KeyRelease>", lambda e: self.update_density_metrics())
+        self.ent_start.bind("<KeyRelease>", lambda e: self.update_density_metrics())
+        self.ent_end.bind("<KeyRelease>", lambda e: self.update_density_metrics())
 
         # Botones de acción
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -166,7 +175,47 @@ class SegmentCard(ctk.CTkFrame):
         self.btn_delete = ctk.CTkButton(btn_frame, text="🗑 Eliminar", width=95, fg_color="#a83232", hover_color="#822727", command=lambda: self.delete_callback(self.data))
         self.btn_delete.pack(side="right", padx=5)
 
+        self.update_density_metrics()
         self.update_status()
+
+    def update_density_metrics(self):
+        try:
+            start = int(self.ent_start.get())
+            end = int(self.ent_end.get())
+            duration_sec = (end - start) / 1000.0
+        except ValueError:
+            self.lbl_density.configure(text="⚠️ Tiempos inválidos", text_color="#e57373")
+            return
+
+        orig_text = self.data.get('original', '').strip()
+        orig_words = len(orig_text.split()) if orig_text else 0
+
+        trans_text = self.txt_translated.get("1.0", "end-1c").strip()
+        trans_words = len(trans_text.split()) if trans_text else 0
+
+        if duration_sec <= 0:
+            self.lbl_density.configure(text="⚠️ Duración inválida (<= 0s)", text_color="#e57373")
+            return
+
+        if trans_words == 0:
+            self.lbl_density.configure(text=f"[{duration_sec:.1f}s] Original: {orig_words} pal. | ⚠️ Sin traducción", text_color="#aaaaaa")
+            return
+
+        wps = trans_words / duration_sec
+        wpm = int(wps * 60)
+
+        # Rango conversacional estándar en inglés: ~2.0 a 2.8 palabras/segundo (120-170 WPM)
+        if wps < 1.7:
+            info = f"[{duration_sec:.1f}s] {trans_words} pal. ({wps:.1f} pal/s - {wpm} WPM) | ⚠️ Corta (ES: {orig_words} pal.) - Sobrará silencio"
+            color = "#ffb74d"
+        elif wps > 3.2:
+            info = f"[{duration_sec:.1f}s] {trans_words} pal. ({wps:.1f} pal/s - {wpm} WPM) | ⚠️ Larga (ES: {orig_words} pal.) - Deberá acelerarse"
+            color = "#e57373"
+        else:
+            info = f"[{duration_sec:.1f}s] {trans_words} pal. ({wps:.1f} pal/s - {wpm} WPM) | ✅ Ritmo equilibrado (ES: {orig_words} pal.)"
+            color = "#81c784"
+
+        self.lbl_density.configure(text=info, text_color=color)
 
     def _play_slice(self):
         try:
@@ -202,6 +251,7 @@ class SegmentCard(ctk.CTkFrame):
             self.data['end_ms'] = int(self.ent_end.get())
             self.data['tone'] = self.opt_tone.get()
             self.save_callback(self.data)
+            self.update_density_metrics()
             self.configure(border_color="#28a745")
             self.after(1000, lambda: self.configure(border_color="#3d3d3d"))
         except ValueError:

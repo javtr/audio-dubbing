@@ -33,33 +33,38 @@ class WhisperAligner:
         return " ".join(full_text)
 
     def generate_gemini_prompt(self, spanish_text):
-        """Genera el prompt listo para copiar y pegar en Gemini Web."""
-        prompt = f"""Actúa como un director de doblaje profesional y traductor audiovisual experto.
-A continuación tienes la transcripción completa de un video en español.
+        """Genera el prompt listo para copiar y pegar en Gemini Web con directrices de isocronía."""
+        prompt = f"""Actúa como un director de doblaje profesional y traductor audiovisual experto en adaptación de guiones (Script Adaptation & Dubbing Localization).
+A continuación tienes la transcripción completa de un video en español para ser doblado al inglés mediante clonación de voz por IA.
 
-Instrucciones:
-1. Divide el texto en oraciones o fragmentos lógicos completos y con sentido natural para doblaje (no dejes frases cortadas a la mitad).
-2. Traduce cada frase al inglés con fluidez y naturalidad (evita traducciones literales o acartonadas).
-3. Asigna a cada frase uno de los siguientes 4 tonos exactos según el contexto emocional:
-   - "Conversational" (Tono natural, neutro, informal o de charla)
-   - "Explanatory" (Tono didáctico, explicando conceptos, pausado)
-   - "Effusive" (Tono enérgico, de advertencia, sorpresa, entusiasmo o énfasis marcado)
-   - "Serious" (Tono formal, conclusión importante o punto clave)
-4. Devuelve ÚNICAMENTE un bloque de código JSON válido con esta estructura exacta (sin texto introductorio ni explicaciones adicionales):
+🎯 OBJETIVO CRÍTICO: ISOCRONÍA Y EXTENSIÓN RÍTMICA
+El mayor error en doblaje es traducir de forma compacta o literal. El inglés suele pronunciarse más rápido y con menos sílabas que el español (~25% a 35% menos tiempo). Si la frase en inglés es demasiado corta, el audio terminará mucho antes de tiempo dejando silencios incómodos en el video.
+
+⚠️ REGLAS OBLIGATORIAS DE ADAPTACIÓN (ISOCRONÍA):
+1. **Compensación de Longitud:** Debes adaptar y enriquecer la redacción en inglés utilizando vocabulario descriptivo, conectores naturales ("as we can clearly see", "let's take a closer look at", "what you need to understand is", "keep in mind that", "right over here") y explicaciones fluidas para que la frase en inglés tenga una DURACIÓN DE PRONUNCIACIÓN APROXIMADAMENTE IGUAL (±10%) a la frase original en español.
+2. **Naturalidad:** No inventes datos técnicos falsos ni repitas palabras absurdamente; usa la riqueza y musicalidad del inglés nativo para llenar el espacio temporal de forma orgánica y profesional.
+3. **Segmentación:** Divide el guion en oraciones completas y con sentido lógico (no cortes frases a la mitad).
+4. **Tono Emocional:** Asigna a cada fragmento uno de estos 4 tonos exactos:
+   - "Conversational": Tono casual, neutro, informal o introductorio.
+   - "Explanatory": Tono didáctico, explicando conceptos técnicos o pasos con calma.
+   - "Effusive": Tono enérgico, de advertencia, sorpresa, entusiasmo o énfasis marcado.
+   - "Serious": Tono formal, conclusión analítica o advertencia de riesgo.
+
+Devuelve ÚNICAMENTE un bloque de código JSON válido con esta estructura exacta (sin texto introductorio, ni despedidas, ni explicaciones adicionales):
 
 [
   {{
     "id": "seg-0",
     "original": "<frase en español>",
-    "translated": "<traducción fluida al inglés>",
-    "tone": "Serious",
+    "translated": "<adaptación al inglés con longitud y ritmo equivalente al español>",
+    "tone": "Conversational",
     "filename": "segment_000.wav"
   }},
   {{
     "id": "seg-1",
     "original": "<frase en español>",
-    "translated": "<traducción fluida al inglés>",
-    "tone": "Conversational",
+    "translated": "<adaptación al inglés con longitud y ritmo equivalente al español>",
+    "tone": "Explanatory",
     "filename": "segment_001.wav"
   }}
 ]
@@ -68,6 +73,7 @@ Instrucciones:
 {spanish_text}
 """
         return prompt
+
 
     def align_timestamps(self, audio_path, gemini_data, callback_status=None):
         """
