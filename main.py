@@ -883,23 +883,23 @@ class AudioDubbingStudio(ctk.CTk):
         self.seek_slider.configure(to=self.total_duration_ms)
         self._update_time_label()
 
-        # Forma de onda original (Azul)
-        orig_data = self.processor.get_waveform_data(self.processor.original_audio)
-        self._draw_waveform_canvas(self.orig_canvas_frame, orig_data, '#1f77b4', is_dubbed=False)
-
-        # Forma de onda doblada (Naranja con cortes)
-        mix_data = self.processor.get_waveform_data(mix)
+        # Lista de marcas de cortes de segmentos
         segs_info = []
         for s in self.processor.metadata:
             segs_info.append((s.get("start_ms", 0), s.get("end_ms", 0)))
 
+        # Forma de onda original (Azul con marcas de corte en español)
+        orig_data = self.processor.get_waveform_data(self.processor.original_audio)
+        self._draw_waveform_canvas(self.orig_canvas_frame, orig_data, '#1f77b4', is_dubbed=False, segments=segs_info)
+
+        # Forma de onda doblada (Naranja con marcas de corte)
+        mix_data = self.processor.get_waveform_data(mix)
         self._draw_waveform_canvas(self.dub_canvas_frame, mix_data, '#ff7f0e', is_dubbed=True, segments=segs_info)
 
     def _draw_waveform_canvas(self, frame, samples, color, is_dubbed=False, segments=None):
         import numpy as np
         for w in frame.winfo_children():
             w.destroy()
-
 
         fig, ax = plt.subplots(figsize=(4, 0.9), dpi=80)
         fig.patch.set_facecolor('#2b2b2b')
@@ -915,11 +915,13 @@ class AudioDubbingStudio(ctk.CTk):
                 ax.set_ylim(-max_val * 1.15, max_val * 1.15)
         ax.set_xlim(0, self.total_duration_ms)
 
+        # Marcas de cortes de cada frase (líneas rojas discontinuas y sombreado translúcido)
         if segments:
             for s_ms, e_ms in segments:
-                ax.axvspan(s_ms, e_ms, color='white', alpha=0.10)
-                ax.axvline(x=s_ms, color='#dc3545', linestyle='--', linewidth=0.8)
-                ax.axvline(x=e_ms, color='#dc3545', linestyle='--', linewidth=0.8)
+                ax.axvspan(s_ms, e_ms, color='white', alpha=0.08)
+                ax.axvline(x=s_ms, color='#ff5252', linestyle='--', linewidth=0.9, alpha=0.85)
+                ax.axvline(x=e_ms, color='#ff5252', linestyle='--', linewidth=0.9, alpha=0.85)
+
 
         # Cabezal de reproducción (Playhead) - línea vertical visible en cyan neón (#00e5ff)
         cur_pos = self.seek_slider.get()
