@@ -75,6 +75,7 @@ class ProjectManager:
             "root": proj_root,
             "audios_dir": audios_dir,
             "metadata_file": metadata_file,
+            "master_metadata_file": os.path.join(proj_root, "secciones_master.json"),
             "audio_file": audio_file,
             "video_file": video_file,
             "export_audio": os.path.join(proj_root, "doblaje_final.wav"),
@@ -146,6 +147,26 @@ class ProjectManager:
         paths = self.get_project_paths(project_name)
         metadata_file = paths["metadata_file"]
         with open(metadata_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        return True
+
+    def load_master_metadata(self, project_name):
+        """Carga el respaldo original inmutable de secciones (secciones_master.json)."""
+        paths = self.get_project_paths(project_name)
+        master_file = paths["master_metadata_file"]
+        if os.path.exists(master_file):
+            try:
+                with open(master_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                print(f"[ERROR] No se pudo leer {master_file}: {e}")
+        return None
+
+    def save_master_metadata(self, project_name, data):
+        """Guarda el respaldo original inmutable de secciones en secciones_master.json."""
+        paths = self.get_project_paths(project_name)
+        master_file = paths["master_metadata_file"]
+        with open(master_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
         return True
 

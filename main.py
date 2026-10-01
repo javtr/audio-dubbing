@@ -316,6 +316,7 @@ class AudioDubbingStudio(ctk.CTk):
         self.current_project = None
         self.project_paths = {}
         self.segments_data = []
+        self.master_segments = []
         self.pinokio_connected = False
 
         # Variables de reproducción y mezcla (Pestaña 3)
@@ -481,9 +482,19 @@ class AudioDubbingStudio(ctk.CTk):
             if "orig_end_ms" not in seg:
                 seg["orig_end_ms"] = seg.get("end_ms", 0)
 
+        # Cargar o inicializar master_segments (Ground Truth inmutable del audio original en español)
+        import copy
+        master = self.pm.load_master_metadata(project_name)
+        if master:
+            self.master_segments = master
+        else:
+            self.master_segments = copy.deepcopy(self.segments_data)
+            self.pm.save_master_metadata(project_name, self.master_segments)
+
+        self.selected_segment_id = None
+
         # Inicializar AudioProcessor
         if self.project_paths.get("audio_file"):
-
             self.processor = AudioProcessor(
                 self.project_paths["audio_file"],
                 self.project_paths["audios_dir"],
@@ -629,8 +640,11 @@ class AudioDubbingStudio(ctk.CTk):
             data = json.loads(raw)
             if not isinstance(data, list):
                 raise ValueError("El JSON debe ser una lista de segmentos [ { ... }, { ... } ]")
+            import copy
             self.segments_data = data
+            self.master_segments = copy.deepcopy(data)
             self.pm.save_project_metadata(self.current_project, data)
+            self.pm.save_master_metadata(self.current_project, self.master_segments)
             if self.processor:
                 self.processor.metadata = data
                 self.processor.recalculate_end_times()
@@ -678,8 +692,11 @@ class AudioDubbingStudio(ctk.CTk):
 
     def _on_align_success(self, aligned_data, duration_ms):
         self.btn_align.configure(state="normal", text="⏱️ Sincronizar Tiempos (Whisper)")
+        import copy
         self.segments_data = aligned_data
+        self.master_segments = copy.deepcopy(aligned_data)
         self.pm.save_project_metadata(self.current_project, aligned_data)
+        self.pm.save_master_metadata(self.current_project, self.master_segments)
         if self.processor:
             self.processor.metadata = aligned_data
             self.processor.recalculate_end_times()
@@ -884,9 +901,9 @@ class AudioDubbingStudio(ctk.CTk):
         self.slider_vol_dub.set(1.0)
         self.slider_vol_dub.pack(side="left", padx=4)
 
-        # Barra de Herramientas de Edición (Mover, Cuchilla, Corte en Cabezal, Suprimir)
+        # Barra de Herramientas de Edición (Selección, Cuchilla, Corte en Playhead, Suprimir)
         self.btn_tool_select = ctk.CTkButton(
-            dub_header, text="✋ Mover", width=68, height=24,
+            dub_header, text="↖️ Selección", width=95, height=24,
             fg_color="#1f6aa5", hover_color="#144870",
             command=lambda: self._set_tool_mode("SELECT")
         )
@@ -900,7 +917,7 @@ class AudioDubbingStudio(ctk.CTk):
         self.btn_tool_razor.pack(side="left", padx=2)
 
         self.btn_split_playhead = ctk.CTkButton(
-            dub_header, text="✂️ En Cabezal", width=90, height=24,
+            dub_header, text="✂️ Cortar en Playhead", width=135, height=24,
             fg_color="#333333", hover_color="#e65100",
             command=self._split_at_playhead
         )
@@ -1059,18 +1076,30 @@ class AudioDubbingStudio(ctk.CTk):
             messagebox.showerror("Error", "Los tiempos de inicio deben ser números enteros válidos.")
 
     def _reset_dubbed_positions(self):
-        """Restaura todos los segmentos doblados a sus marcas y duraciones originales en español."""
-        if not self.processor or not self.processor.metadata:
+        """Restaura todos los segmentos doblados a sus marcas, audios y duraciones originales en español."""
+        if not self.processor:
             return
 
-        if not messagebox.askyesno("Confirmar Reseteo", "¿Deseas restaurar todos los segmentos a sus posiciones originales en español?"):
+        source = self.master_segments if self.master_segments else (self.segments_data if self.segments_data else self.processor.metadata)
+        if not source:
             return
 
-        for seg in self.processor.metadata:
+        if not messagebox.askyesno("Confirmar Reseteo", "¿Deseas restaurar todos los segmentos a sus posiciones y audios originales en español?\n(Se recuperarán partes cortadas o suprimidas)"):
+            return
+
+        import copy
+        restored = copy.deepcopy(source)
+
+        if hasattr(self.processor, 'processed_segments'):
+            self.processor.processed_segments.clear()
+
+        for seg in restored:
             orig_s = seg.get("orig_start_ms", seg.get("start_ms", 0))
             orig_e = seg.get("orig_end_ms", seg.get("end_ms", 0))
             seg["start_ms"] = orig_s
             seg["end_ms"] = orig_e
+            seg["orig_start_ms"] = orig_s
+            seg["orig_end_ms"] = orig_e
 
             # Obtener duración pura del archivo y calcular ratio original
             fname = seg.get("filename", "")
@@ -1085,18 +1114,20 @@ class AudioDubbingStudio(ctk.CTk):
             target_dur = max(300, orig_e - orig_s)
             orig_ratio = raw_dur / target_dur if (raw_dur > 0 and target_dur > 0) else 1.0
             orig_ratio = max(0.5, min(orig_ratio, 5.0))
+            seg["ratio"] = orig_ratio
 
             try:
                 self.processor.process_segment(seg, manual_ratio=orig_ratio)
             except Exception as e:
                 print(f"[WARN] Error procesando reseteo para {fname}: {e}")
 
+        self.processor.metadata = restored
         self.selected_segment_id = None
         self._update_delete_button_state()
-        self.processor.recalculate_end_times()
         self.pm.save_project_metadata(self.current_project, self.processor.metadata)
         self._refresh_tab3()
-        messagebox.showinfo("Reseteado", "Todos los segmentos han sido restaurados a sus posiciones originales.")
+        self._refresh_tab2()
+        messagebox.showinfo("Reseteado", "Todos los segmentos han sido restaurados a sus posiciones y audios originales.")
 
     # ----------------------------------------------------------
     # HERRAMIENTAS DE EDICIÓN: CUCHILLA (RAZOR) Y SUPRESIÓN
@@ -1328,7 +1359,8 @@ class AudioDubbingStudio(ctk.CTk):
 
         # 1. Marcas fijas del audio original en español (Ground Truth inmutable con texto original)
         orig_segs_info = []
-        for s in self.processor.metadata:
+        source_orig = self.master_segments if self.master_segments else self.processor.metadata
+        for s in source_orig:
             s_orig = s.get("orig_start_ms", s.get("start_ms", 0))
             e_orig = s.get("orig_end_ms", s.get("end_ms", 0))
             orig_segs_info.append((s_orig, e_orig, s.get("original", ""), s.get("id", "")))
@@ -1770,7 +1802,8 @@ class AudioDubbingStudio(ctk.CTk):
 
         x = event.xdata
         hovered_text = ""
-        for seg in self.processor.metadata:
+        source_orig = self.master_segments if self.master_segments else self.processor.metadata
+        for seg in source_orig:
             s_orig = seg.get("orig_start_ms", seg.get("start_ms", 0))
             e_orig = seg.get("orig_end_ms", seg.get("end_ms", 0))
             if s_orig <= x <= e_orig:
