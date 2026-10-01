@@ -8,9 +8,29 @@ import io
 import queue
 import threading
 import subprocess
+import gc
 import tkinter as tk
 from tkinter import filedialog, messagebox
 import customtkinter as ctk
+
+# Parche de seguridad para Python 3.12+: evitar que el Garbage Collector en hilos secundarios dispare RuntimeError
+_orig_var_del = tk.Variable.__del__
+def _safe_var_del(self):
+    if threading.current_thread() is threading.main_thread():
+        try:
+            _orig_var_del(self)
+        except Exception:
+            pass
+tk.Variable.__del__ = _safe_var_del
+
+_orig_img_del = tk.Image.__del__
+def _safe_img_del(self):
+    if threading.current_thread() is threading.main_thread():
+        try:
+            _orig_img_del(self)
+        except Exception:
+            pass
+tk.Image.__del__ = _safe_img_del
 import numpy as np
 import matplotlib
 matplotlib.use("TkAgg")
@@ -551,6 +571,7 @@ class AudioDubbingStudio(ctk.CTk):
             except Exception as e:
                 self.run_on_ui_thread(lambda: self._on_transcribe_error(str(e)))
 
+        gc.collect()
         threading.Thread(target=_worker, daemon=True).start()
 
     def _on_transcribe_success(self, text):
@@ -628,6 +649,7 @@ class AudioDubbingStudio(ctk.CTk):
             except Exception as e:
                 self.run_on_ui_thread(lambda: self._on_align_error(str(e)))
 
+        gc.collect()
         threading.Thread(target=_worker, daemon=True).start()
 
     def _on_align_success(self, aligned_data, duration_ms):
@@ -1510,8 +1532,11 @@ class AudioDubbingStudio(ctk.CTk):
         self._stop_playback()
         if self.processor:
             self.processor.cleanup()
-        self.destroy()
-        sys.exit(0)
+        try:
+            self.quit()
+            self.destroy()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
