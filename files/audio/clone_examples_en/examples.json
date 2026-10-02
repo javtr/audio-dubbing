@@ -1,0 +1,22 @@
+[
+  {
+    "segmento": "ref_Conversational",
+    "transcripcion": "Let's take a closer look at all of the new features we're launching today with a walkthrough of the workflow you'll actually use. We'll start by asking the AI for a strategy.",
+    "tono": "Conversational"
+  },
+  {
+    "segmento": "ref_Explanatory",
+    "transcripcion": "What to prioritize in a trend, what to watch in a range, and how to combine overlays and oscillators to confirm or stand down.",
+    "tono": "Explanatory"
+  },
+  {
+    "segmento": "ref_Effusive",
+    "transcripcion": "This is the new Luxalgo AI Platform, now with live alerts for automation of millions of strategies.",
+    "tono": "Effusive"
+  },
+  {
+    "segmento": "ref_Serious",
+    "transcripcion": "You can save it to your account for later access or use the replicate option to copy the strategy to TradingView in two clicks and paste it there.",
+    "tono": "Serious"
+  }
+]

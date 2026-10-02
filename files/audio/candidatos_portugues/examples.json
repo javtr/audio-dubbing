@@ -1,0 +1,22 @@
+[
+  {
+    "segmento": "ref_Conversational",
+    "transcripcion": "Para mergulhar por mais de nove horas seguidas em conteúdo prático e conectado ao que há de mais atual no day trade.",
+    "tono": "Conversational"
+  },
+  {
+    "segmento": "ref_Explanatory",
+    "transcripcion": "A condução do dia ficou com Luiz Ferreira, analista de marketing da Nelógica, que conectou as sessões e trouxe os highlights das novas ferramentas do Profit Ultra.",
+    "tono": "Explanatory"
+  },
+  {
+    "segmento": "ref_Effusive",
+    "transcripcion": "Um dia inteiro dedicado à inovação, automação e inteligência artificial no mercado financeiro.",
+    "tono": "Effusive"
+  },
+  {
+    "segmento": "ref_Serious",
+    "transcripcion": "O Auto Trade Summit 2.0 mostrou na prática que consistência nasce de método e que o trader do futuro já opera com tecnologia do setup ao robô.",
+    "tono": "Serious"
+  }
+]
