@@ -29,7 +29,7 @@ class TopBar(ctk.CTkFrame):
 
         self.lbl_lang_badge = ctk.CTkLabel(
             self,
-            text="🇺🇸 EN",
+            text="EN",
             font=("Arial", 11, "bold"),
             text_color="#90caf9",
             fg_color="#0d47a1",
@@ -96,6 +96,6 @@ class TopBar(ctk.CTkFrame):
 
     def set_project_language(self, lang_code):
         if str(lang_code).lower() == "pt":
-            self.lbl_lang_badge.configure(text="🇧🇷 PT", fg_color="#1b5e20", text_color="#a5d6a7")
+            self.lbl_lang_badge.configure(text="PT", fg_color="#1b5e20", text_color="#a5d6a7")
         else:
-            self.lbl_lang_badge.configure(text="🇺🇸 EN", fg_color="#0d47a1", text_color="#90caf9")
+            self.lbl_lang_badge.configure(text="EN", fg_color="#0d47a1", text_color="#90caf9")

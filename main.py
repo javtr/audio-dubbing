@@ -167,8 +167,8 @@ class AudioDubbingStudio(ctk.CTk):
         # Actualizar indicador de idioma en la barra superior y título
         lang = self.pm.get_project_language(project_name)
         self.top_bar.set_project_language(lang)
-        lang_flag = "🇧🇷 Portugués" if lang == "pt" else "🇺🇸 Inglés"
-        self.title(f"Logic Imprint - Audio Dubbing Studio | {project_name} [{lang_flag}]")
+        lang_tag = "Portugués (PT)" if lang == "pt" else "Inglés (EN)"
+        self.title(f"Logic Imprint - Audio Dubbing Studio | {project_name} [{lang_tag}]")
 
         # Asegurar anclas fijas originales inmutables
         for seg in self.segments_data:

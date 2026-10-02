@@ -41,10 +41,10 @@ class NewProjectDialog(ctk.CTkToplevel):
 
         self.seg_lang = ctk.CTkSegmentedButton(
             self,
-            values=["🇺🇸 Inglés (en)", "🇧🇷 Portugués (pt)"],
+            values=["Inglés (EN)", "Portugués (PT)"],
             width=470
         )
-        self.seg_lang.set("🇺🇸 Inglés (en)")
+        self.seg_lang.set("Inglés (EN)")
         self.seg_lang.pack(padx=25, pady=(0, 18))
 
         # Botones inferiores
