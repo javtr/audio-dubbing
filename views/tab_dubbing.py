@@ -7,12 +7,11 @@ from ui.widgets.segment_card import SegmentCard
 from core.timing_validator import TimingValidator
 
 class TabDubbingView(ctk.CTkFrame):
-    """Pestaña 2: Doblaje y clonación de voz con Pinokio (0.6B / 1.7B)."""
+    """Pestaña 2: Doblaje y clonación de voz con Pinokio (1.7B)."""
 
     def __init__(self, master, app, **kwargs):
         super().__init__(master, fg_color="transparent", **kwargs)
         self.app = app
-        self.selected_tts_model = "0.6B"
         self.card_widgets = {}
         self._build_ui()
 
@@ -34,18 +33,6 @@ class TabDubbingView(ctk.CTkFrame):
         btn_reload = ctk.CTkButton(top_frame, text="🔄 Recargar", width=100, command=self.refresh)
         btn_reload.pack(side="left", padx=5)
 
-        # Switcher de Modelo TTS (0.6B vs 1.7B)
-        model_frame = ctk.CTkFrame(top_frame, fg_color="transparent")
-        model_frame.pack(side="left", padx=15)
-        ctk.CTkLabel(model_frame, text="Modelo TTS:", font=("Arial", 12, "bold")).pack(side="left", padx=(0, 6))
-
-        self.seg_tts_model = ctk.CTkSegmentedButton(
-            model_frame,
-            values=["0.6B (Rápido)", "1.7B (Calidad)"],
-            command=self._on_tts_model_changed
-        )
-        self.seg_tts_model.set("0.6B (Rápido)")
-        self.seg_tts_model.pack(side="left")
 
         self.lbl_t2_progress = ctk.CTkLabel(top_frame, text="", font=("Arial", 12), text_color="#aaaaaa")
         self.lbl_t2_progress.pack(side="left", padx=15)
@@ -121,9 +108,6 @@ class TabDubbingView(ctk.CTkFrame):
             self.refresh()
             self.app.notify_metadata_updated()
 
-    def _on_tts_model_changed(self, value):
-        self.selected_tts_model = "0.6B" if "0.6B" in value else "1.7B"
-
     def _start_single_dubbing(self, seg):
         if not self.app.pinokio.check_connection():
             messagebox.showerror(
@@ -184,11 +168,13 @@ class TabDubbingView(ctk.CTkFrame):
         threading.Thread(target=_worker, daemon=True).start()
 
     def _generate_segment_voice(self, seg):
+        lang = self.app.pm.get_project_language(self.app.current_project)
         tone = seg.get('tone', 'Conversational')
-        examples = self.app.pm.get_examples_config()
+        examples_dir = self.app.pm.get_clone_examples_dir(lang)
+        examples = self.app.pm.get_examples_config(lang)
         tone_map = {ex['tono']: ex['transcripcion'] for ex in examples}
 
-        ref_audio_path = os.path.join(self.app.pm.assets_dir, f"ref_{tone}.wav")
+        ref_audio_path = os.path.join(examples_dir, f"ref_{tone}.wav")
         ref_text = tone_map.get(tone, "This is a reference text.")
         output_path = os.path.join(self.app.project_paths["audios_dir"], seg['filename'])
 
@@ -199,12 +185,14 @@ class TabDubbingView(ctk.CTkFrame):
         except Exception:
             pass
 
+        pinokio_lang = "Portuguese" if lang == "pt" else "English"
         self.app.pinokio.generate_voice_clone(
             ref_audio_path=ref_audio_path,
             ref_text=ref_text,
             target_text=seg['translated'],
             output_path=output_path,
-            model_size=self.selected_tts_model
+            language=pinokio_lang,
+            model_size="1.7B"
         )
 
     def _on_dubbing_all_finished(self):

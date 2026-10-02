@@ -79,18 +79,29 @@ class ProjectManager:
             "audio_file": audio_file,
             "video_file": video_file,
             "export_audio": os.path.join(proj_root, "doblaje_final.wav"),
-            "export_video": os.path.join(proj_root, "video_doblado.mp4")
+            "export_video": os.path.join(proj_root, "video_doblado.mp4"),
+            "config_file": os.path.join(proj_root, "config.json")
         }
 
-    def create_project(self, name, source_file=None):
+    def create_project(self, name, source_file=None, target_language="en"):
         """
         Crea un nuevo proyecto.
         Si se pasa source_file (.mp4 o audio), copia o extrae el audio a 'original.wav'.
+        Guarda config.json con el idioma seleccionado ('en' o 'pt').
         """
         safe_name = self.sanitize_name(name)
         proj_root = os.path.join(self.projects_dir, safe_name)
         os.makedirs(proj_root, exist_ok=True)
         os.makedirs(os.path.join(proj_root, "audios"), exist_ok=True)
+
+        # Guardar config.json del proyecto
+        config_file = os.path.join(proj_root, "config.json")
+        config_data = {
+            "name": safe_name,
+            "target_language": target_language or "en"
+        }
+        with open(config_file, "w", encoding="utf-8") as f:
+            json.dump(config_data, f, indent=2, ensure_ascii=False)
 
         metadata_file = os.path.join(proj_root, "secciones.json")
         if not os.path.exists(metadata_file):
@@ -170,10 +181,42 @@ class ProjectManager:
             json.dump(data, f, indent=2, ensure_ascii=False)
         return True
 
-    def get_examples_config(self):
-        """Carga los ejemplos de clonación y tonos de assets/clone_examples/examples.json."""
-        json_path = os.path.join(self.assets_dir, "examples.json")
+    def get_project_config(self, project_name):
+        """Carga la configuración de un proyecto (config.json) con fallback seguro a inglés."""
+        if not project_name:
+            return {"target_language": "en"}
+        paths = self.get_project_paths(project_name)
+        cfg_file = paths.get("config_file")
+        if cfg_file and os.path.exists(cfg_file):
+            try:
+                with open(cfg_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                print(f"[Warning] Error leyendo {cfg_file}: {e}")
+        return {"target_language": "en"}
+
+    def get_project_language(self, project_name):
+        """Devuelve el código de idioma destino del proyecto ('en' o 'pt')."""
+        cfg = self.get_project_config(project_name)
+        return cfg.get("target_language", "en")
+
+    def get_clone_examples_dir(self, lang="en"):
+        """Devuelve la ruta absoluta a la carpeta de ejemplos de clonación para el idioma dado ('en' o 'pt')."""
+        clean_lang = "pt" if str(lang).lower() in ("pt", "portuguese") else "en"
+        target_dir = os.path.join(self.assets_dir, clean_lang)
+        if os.path.exists(target_dir):
+            return target_dir
+        return self.assets_dir
+
+    def get_examples_config(self, lang="en"):
+        """Carga los ejemplos de clonación y tonos de assets/clone_examples/<lang>/examples.json."""
+        target_dir = self.get_clone_examples_dir(lang)
+        json_path = os.path.join(target_dir, "examples.json")
         if os.path.exists(json_path):
             with open(json_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        root_json = os.path.join(self.assets_dir, "examples.json")
+        if os.path.exists(root_json):
+            with open(root_json, "r", encoding="utf-8") as f:
                 return json.load(f)
         return []

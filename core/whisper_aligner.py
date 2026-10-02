@@ -56,8 +56,13 @@ class WhisperAligner:
         finally:
             self.unload_model()
 
-    def generate_gemini_prompt(self, spanish_text):
-        """Genera el prompt listo para copiar y pegar en Gemini Web con directrices estrictas de conteo y balance de palabras (90%-110%)."""
+    def generate_gemini_prompt(self, spanish_text, target_lang="en"):
+        """Genera el prompt listo para copiar y pegar en Gemini Web según el idioma destino ('en' o 'pt')."""
+        if str(target_lang).lower() in ("pt", "portuguese"):
+            return self._build_portuguese_prompt(spanish_text)
+        return self._build_english_prompt(spanish_text)
+
+    def _build_english_prompt(self, spanish_text):
         prompt = f"""Actúa como un director de doblaje profesional y traductor audiovisual experto en adaptación de guiones (Script Adaptation & Dubbing Localization).
 A continuación tienes la transcripción en español de un video para ser doblado al inglés mediante clonación de voz por IA (TTS).
 
@@ -99,6 +104,58 @@ Devuelve ÚNICAMENTE un bloque de código JSON válido con esta estructura exact
     "id": "seg-1",
     "original": "<frase en español>",
     "translated": "<adaptación en inglés verificando que tenga entre el 90% y el 110% de palabras>",
+    "tone": "Explanatory",
+    "filename": "segment_001.wav"
+  }}
+]
+
+--- GUION ORIGINAL EN ESPAÑOL ---
+{spanish_text}
+"""
+        return prompt
+
+    def _build_portuguese_prompt(self, spanish_text):
+        prompt = f"""Actúa como un director de doblaje profesional y traductor audiovisual experto en adaptación de guiones (Script Adaptation & Dubbing Localization).
+A continuación tienes la transcripción en español de un video para ser doblado al PORTUGUÉS DE BRASIL (pt-BR) neutro mediante clonación de voz por IA (TTS) para un canal de trading e inversiones.
+
+🎯 REGLA DE ORO: BALANCE Y CONTEO ESTRICTO DE PALABRAS (RANGO OBLIGATORIO: 90% A 110%)
+En el doblaje por IA, la duración del audio sintetizado depende directamente de la cantidad de palabras:
+- Si la adaptación tiene MENOS DEL 90% de palabras: El audio en portugués termina demasiado rápido, dejando vacíos incómodos de silencio en el video y perdiendo información valiosa.
+- Si la adaptación tiene MÁS DEL 110% de palabras: El audio se ve obligado a acelerarse de manera artificial y excesiva, arruinando la dicción y la naturalidad del locutor.
+- RANGO VÁLIDO Y OBLIGATORIO: La traducción en portugués DEBE tener entre el 90% y el 110% del número de palabras de la frase original en español. El sistema marcará como error cualquier segmento que quede por debajo del 90%.
+
+📐 PROCEDIMIENTO OBLIGATORIO DE CONTEO Y CÁLCULO PARA CADA SEGMENTO:
+Antes de redactar la versión final de cada fragmento, DEBES seguir este proceso:
+1. Cuenta las palabras exactas de la frase en español (ejemplo: 40 palabras).
+2. Calcula tu rango objetivo de palabras en portugués: mínimo 90% (36 palabras) y máximo 110% (44 palabras).
+3. Redacta la adaptación en portugués brasileño natural y cuenta cuántas palabras obtuviste:
+   - Si tu traducción en portugués quedó por debajo del 90% (< 36 palabras): ¡NO LA ENTREGUES ASÍ! Es demasiado corta. Amplía la redacción explicando con mayor detalle, utilizando vocabulario técnico preciso, oraciones completas y descripciones ricas sin perder el sentido original.
+   - Si tu traducción superó el 110% (> 44 palabras): Condensa levemente oraciones secundarias sin omitir datos esenciales.
+
+⚠️ OTRAS REGLAS OBLIGATORIAS:
+1. **NO RESUMAS NI OMITAS INFORMACIÓN:** No es un resumen. Debes traducir TODOS los conceptos, detalles, pasos técnicos, advertencias y matices expresados en el original.
+2. **PORTUGUÉS DE BRASIL FLUIDO Y TÉCNICO:** Usa la terminología estándar del mercado financiero y trading en Brasil (ejemplos: *médias móveis, suporte e resistência, rompimento, pullbacks, footprint, fluxo de ordens, robôs traders, stop loss, gerenciamento de risco*).
+3. **Segmentación Coherente:** Cada fragmento debe representar una oración o idea completa con puntuación adecuada.
+4. **Tono Emocional:** Asigna a cada fragmento uno de estos 4 tonos exactos según el contexto:
+   - "Conversational": Tono casual, neutro, informal o introductorio.
+   - "Explanatory": Tono didáctico, explicando conceptos técnicos o pasos con calma.
+   - "Effusive": Tono enérgico, de advertencia, sorpresa, entusiasmo o énfasis marcado.
+   - "Serious": Tono formal, conclusión analítica o advertencia de riesgo.
+
+Devuelve ÚNICAMENTE un bloque de código JSON válido con esta estructura exacta (sin texto introductorio, ni despedidas, ni explicaciones adicionales):
+
+[
+  {{
+    "id": "seg-0",
+    "original": "<frase en español>",
+    "translated": "<adaptación en portugués verificando que tenga entre el 90% y el 110% de palabras>",
+    "tone": "Conversational",
+    "filename": "segment_000.wav"
+  }},
+  {{
+    "id": "seg-1",
+    "original": "<frase en español>",
+    "translated": "<adaptación en portugués verificando que tenga entre el 90% y el 110% de palabras>",
     "tone": "Explanatory",
     "filename": "segment_001.wav"
   }}

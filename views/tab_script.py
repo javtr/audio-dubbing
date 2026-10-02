@@ -149,11 +149,13 @@ class TabScriptView(ctk.CTkFrame):
             messagebox.showwarning("Atención", "Primero transcribe el audio o escribe el texto en el cuadro izquierdo.")
             return
 
-        prompt = self.app.aligner.generate_gemini_prompt(content)
+        lang = self.app.pm.get_project_language(self.app.current_project)
+        prompt = self.app.aligner.generate_gemini_prompt(content, target_lang=lang)
         self.clipboard_clear()
         self.clipboard_append(prompt)
-        self.lbl_t1_status.configure(text="¡Prompt copiado al portapapeles! Pégalo en Gemini Web.", text_color="#28a745")
-        messagebox.showinfo("Copiado", "El prompt formateado fue copiado al portapapeles.\nPégalo en Gemini Web y copia el JSON resultante.")
+        lang_label = "Portugués (Brasil)" if lang == "pt" else "Inglés"
+        self.lbl_t1_status.configure(text=f"¡Prompt ({lang_label}) copiado al portapapeles! Pégalo en Gemini Web.", text_color="#28a745")
+        messagebox.showinfo("Copiado", f"El prompt formateado para doblaje a {lang_label} fue copiado al portapapeles.\nPégalo en Gemini Web y copia el JSON resultante.")
 
     def _save_raw_json(self):
         raw = self.txt_json.get("1.0", "end-1c").strip()

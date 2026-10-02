@@ -37,7 +37,9 @@ proyectos/*
 !proyectos/.gitkeep
 
 # Mantenemos examples.json pero ignoramos los audios de referencia si son pesados
+assets/clone_examples/**/*.wav
 assets/clone_examples/*.wav
+files/clone_examples/**/*.wav
 files/clone_examples/*.wav
 
 # Ignoramos el JSON generado automáticamente por la app

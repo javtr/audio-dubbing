@@ -7,7 +7,7 @@ class NewProjectDialog(ctk.CTkToplevel):
     def __init__(self, parent, on_create_callback):
         super().__init__(parent)
         self.title("Crear Nuevo Proyecto")
-        self.geometry("520x260")
+        self.geometry("520x335")
         self.resizable(False, False)
         self.on_create_callback = on_create_callback
         self.selected_file = None
@@ -17,23 +17,35 @@ class NewProjectDialog(ctk.CTkToplevel):
 
         # Nombre del proyecto
         lbl_name = ctk.CTkLabel(self, text="Nombre del Proyecto:", font=("Arial", 13, "bold"))
-        lbl_name.pack(anchor="w", padx=25, pady=(20, 5))
+        lbl_name.pack(anchor="w", padx=25, pady=(15, 5))
 
         self.ent_name = ctk.CTkEntry(self, placeholder_text="Ej: Tutorial_Volume_Profile", width=470)
-        self.ent_name.pack(padx=25, pady=(0, 15))
+        self.ent_name.pack(padx=25, pady=(0, 12))
 
         # Archivo multimedia (Video o Audio)
         lbl_file = ctk.CTkLabel(self, text="Video (.mp4) o Audio de Entrada:", font=("Arial", 13, "bold"))
         lbl_file.pack(anchor="w", padx=25, pady=(0, 5))
 
         file_frame = ctk.CTkFrame(self, fg_color="transparent")
-        file_frame.pack(fill="x", padx=25, pady=(0, 20))
+        file_frame.pack(fill="x", padx=25, pady=(0, 12))
 
         self.lbl_selected = ctk.CTkLabel(file_frame, text="Ningún archivo seleccionado", text_color="#aaaaaa", anchor="w")
         self.lbl_selected.pack(side="left", fill="x", expand=True)
 
         btn_browse = ctk.CTkButton(file_frame, text="Examinar...", width=110, command=self._browse_file)
         btn_browse.pack(side="right")
+
+        # Idioma destino del doblaje
+        lbl_lang = ctk.CTkLabel(self, text="Idioma de Doblaje:", font=("Arial", 13, "bold"))
+        lbl_lang.pack(anchor="w", padx=25, pady=(0, 5))
+
+        self.seg_lang = ctk.CTkSegmentedButton(
+            self,
+            values=["🇺🇸 Inglés (en)", "🇧🇷 Portugués (pt)"],
+            width=470
+        )
+        self.seg_lang.set("🇺🇸 Inglés (en)")
+        self.seg_lang.pack(padx=25, pady=(0, 18))
 
         # Botones inferiores
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -67,6 +79,7 @@ class NewProjectDialog(ctk.CTkToplevel):
             messagebox.showwarning("Atención", "Por favor ingresa un nombre para el proyecto.")
             return
 
+        lang_code = "pt" if "pt" in str(self.seg_lang.get()).lower() else "en"
         self.btn_create.configure(state="disabled", text="Creando...")
-        self.on_create_callback(name, self.selected_file)
+        self.on_create_callback(name, self.selected_file, lang_code)
         self.destroy()

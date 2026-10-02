@@ -71,7 +71,6 @@ class AudioDubbingStudio(ctk.CTk):
         self.segments_data = []
         self.master_segments = []
         self.pinokio_connected = False
-        self.selected_tts_model = "0.6B"
 
         # Cola thread-safe para actualizar la interfaz gráfica desde hilos secundarios
         self._gui_queue = queue.Queue()
@@ -137,11 +136,12 @@ class AudioDubbingStudio(ctk.CTk):
     def _show_new_project_dialog(self):
         NewProjectDialog(self, self._create_new_project)
 
-    def _create_new_project(self, name, source_file):
+    def _create_new_project(self, name, source_file, target_language="en"):
         try:
-            safe_name, paths = self.pm.create_project(name, source_file)
+            safe_name, paths = self.pm.create_project(name, source_file, target_language)
             self._refresh_project_list(select_project=safe_name)
-            messagebox.showinfo("Éxito", f"Proyecto '{safe_name}' creado correctamente.")
+            lang_label = "Portugués (pt)" if target_language == "pt" else "Inglés (en)"
+            messagebox.showinfo("Éxito", f"Proyecto '{safe_name}' [{lang_label}] creado correctamente.")
         except Exception as e:
             messagebox.showerror("Error", f"No se pudo crear el proyecto: {e}")
 
@@ -163,6 +163,12 @@ class AudioDubbingStudio(ctk.CTk):
         self.current_project = project_name
         self.project_paths = self.pm.get_project_paths(project_name)
         self.segments_data = self.pm.load_project_metadata(project_name)
+
+        # Actualizar indicador de idioma en la barra superior y título
+        lang = self.pm.get_project_language(project_name)
+        self.top_bar.set_project_language(lang)
+        lang_flag = "🇧🇷 Portugués" if lang == "pt" else "🇺🇸 Inglés"
+        self.title(f"Logic Imprint - Audio Dubbing Studio | {project_name} [{lang_flag}]")
 
         # Asegurar anclas fijas originales inmutables
         for seg in self.segments_data:

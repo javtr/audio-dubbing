@@ -22,7 +22,7 @@ class PinokioClient:
             self._client = Client(self.base_url)
         return self._client
 
-    def generate_voice_clone(self, ref_audio_path, ref_text, target_text, output_path, model_size="0.6B"):
+    def generate_voice_clone(self, ref_audio_path, ref_text, target_text, output_path, language="English", model_size="1.7B"):
         """
         Envía la solicitud de clonación de voz a TTS vía Gradio en Pinokio.
         Guarda el audio generado en output_path.
@@ -30,13 +30,23 @@ class PinokioClient:
         if not os.path.exists(ref_audio_path):
             raise FileNotFoundError(f"Audio de referencia no encontrado: {ref_audio_path}")
 
+        lang_map = {
+            "en": "English",
+            "english": "English",
+            "pt": "Portuguese",
+            "portuguese": "Portuguese",
+            "es": "Spanish",
+            "spanish": "Spanish"
+        }
+        resolved_lang = lang_map.get(str(language).lower(), language)
+
         client = self._get_client()
 
         result = client.predict(
             ref_audio=handle_file(ref_audio_path),
             ref_text=ref_text,
             target_text=target_text,
-            language="English",
+            language=resolved_lang,
             use_xvector_only=False,
             model_size=model_size,
             max_chunk_chars=200,

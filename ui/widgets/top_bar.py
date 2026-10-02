@@ -27,6 +27,18 @@ class TopBar(ctk.CTkFrame):
         )
         self.opt_project.pack(side="left", padx=5)
 
+        self.lbl_lang_badge = ctk.CTkLabel(
+            self,
+            text="🇺🇸 EN",
+            font=("Arial", 11, "bold"),
+            text_color="#90caf9",
+            fg_color="#0d47a1",
+            corner_radius=4,
+            padx=8,
+            pady=2
+        )
+        self.lbl_lang_badge.pack(side="left", padx=(2, 6))
+
         btn_new_proj = ctk.CTkButton(
             self,
             text="➕ Nuevo",
@@ -81,3 +93,9 @@ class TopBar(ctk.CTkFrame):
             self.lbl_pinokio.configure(text="● Pinokio Online", text_color="#28a745")
         else:
             self.lbl_pinokio.configure(text="● Pinokio Offline (127.0.0.1:7860)", text_color="#e57373")
+
+    def set_project_language(self, lang_code):
+        if str(lang_code).lower() == "pt":
+            self.lbl_lang_badge.configure(text="🇧🇷 PT", fg_color="#1b5e20", text_color="#a5d6a7")
+        else:
+            self.lbl_lang_badge.configure(text="🇺🇸 EN", fg_color="#0d47a1", text_color="#90caf9")
