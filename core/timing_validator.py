@@ -54,9 +54,9 @@ class TimingValidator:
             elif dur_ms > 50000:
                 issues.append(f"Duración muy larga ({dur_ms/1000:.1f}s)")
 
-            # 5. Segmento excesivamente largo (> 150 palabras)
-            if word_count > 150:
-                issues.append(f"Segmento excesivamente largo ({word_count} palabras, recomendado ≤ 150)")
+            # 5. Segmento excesivamente largo (> 80 palabras)
+            if word_count > 80:
+                issues.append(f"Segmento muy largo ({word_count} palabras, recomendado entre 30 y 60, máx 80)")
 
             if issues:
                 anomalies[seg_id] = issues

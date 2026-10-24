@@ -80,10 +80,11 @@ class WhisperAligner:
         prompt = f"""Actúa como un director de doblaje profesional y traductor audiovisual experto en adaptación de guiones (Script Adaptation & Dubbing Localization).
 A continuación tienes la transcripción en español de un video para ser doblado al inglés mediante clonación de voz por IA (TTS).
 
-📏 REGLA CRÍTICA DE SEGMENTACIÓN (MÁXIMO 150 PALABRAS POR SEGMENTO):
-- LÍMITE MÁXIMO ESTRICTO: NINGÚN segmento debe superar las 150 palabras bajo ninguna circunstancia. Si el orador habla de corrido o expone una idea extensa, DEBES dividirla obligatoriamente en múltiples fragmentos más cortos.
-- RANGO IDEAL: Entre 30 y 100 palabras por segmento. Los fragmentos moderados son indispensables para una síntesis de voz natural y una sincronización precisa con las escenas del video.
-- PUNTOS DE CORTE NATURALES: Divide el texto aprovechando pausas naturales, puntos y seguido, cambios de idea o conectores discursivos (ej. "por lo tanto", "en segundo lugar", "ahora bien", "por ejemplo"). Jamás agrupes múltiples oraciones complejas en un solo bloque gigante.
+📏 REGLA CRÍTICA DE SEGMENTACIÓN (RANGO OBLIGATORIO: 30 A 60 PALABRAS, MÁXIMO 70-80):
+- RANGO IDEAL OBLIGATORIO: Cada segmento DEBE contener entre 30 y 60 palabras (máximo 70 palabras). Esto equivale a 1 o 2 oraciones breves (unos 10 a 18 segundos de locución).
+- TOPE MÁXIMO ESTRICTO: NINGÚN segmento debe superar las 70-80 palabras bajo ninguna circunstancia. Si el orador expone una idea larga o habla de corrido, DEBES dividirla obligatoriamente en múltiples fragmentos pequeños.
+- ¿POR QUÉ ES OBLIGATORIO?: Los segmentos largos (>70 palabras) causan silencios muertos gigantes al final del segmento, porque el inglés y el motor de IA hablan a un ritmo más compacto y continuo que el español pausado del video original.
+- PUNTOS DE CORTE NATURALES: Corta en puntos y seguido, comas de transición, pausas de respiración o conectores lógicos (ej. "por lo tanto", "ahora bien", "por ejemplo", "en este caso"). Cada segmento debe coincidir con una sola acción o concepto en pantalla.
 
 🎯 REGLA DE ORO: BALANCE Y CONTEO ESTRICTO DE PALABRAS (RANGO OBLIGATORIO: 90% A 110%)
 En el doblaje por IA, la duración del audio sintetizado depende directamente de la cantidad de palabras:
@@ -93,7 +94,7 @@ En el doblaje por IA, la duración del audio sintetizado depende directamente de
 
 📐 PROCEDIMIENTO OBLIGATORIO DE CONTEO Y CÁLCULO PARA CADA SEGMENTO:
 Antes de redactar la versión final de cada fragmento, DEBES seguir este proceso:
-1. Divide el texto fuente en fragmentos de tamaño moderado (máximo 150 palabras, idealmente entre 30 y 100 palabras).
+1. Divide el texto fuente en fragmentos pequeños (idealmente entre 30 y 60 palabras, nunca más de 70-80 palabras).
 2. Cuenta las palabras exactas de la frase en español del segmento (ejemplo: 45 palabras).
 3. Calcula tu rango objetivo de palabras en inglés: mínimo 90% (41 palabras) y máximo 110% (49 palabras).
 4. Redacta la adaptación en inglés y cuenta cuántas palabras obtuviste:
@@ -115,14 +116,14 @@ Devuelve ÚNICAMENTE un bloque de código JSON válido con esta estructura exact
 [
   {{
     "id": "seg-0",
-    "original": "<frase en español (máximo 150 palabras)>",
+    "original": "<frase en español (entre 30 y 60 palabras, máx 70-80)>",
     "translated": "<adaptación en inglés verificando que tenga entre el 90% y el 110% de palabras>",
     "tone": "Conversational",
     "filename": "segment_000.wav"
   }},
   {{
     "id": "seg-1",
-    "original": "<frase en español (máximo 150 palabras)>",
+    "original": "<frase en español (entre 30 y 60 palabras, máx 70-80)>",
     "translated": "<adaptación en inglés verificando que tenga entre el 90% y el 110% de palabras>",
     "tone": "Explanatory",
     "filename": "segment_001.wav"
@@ -138,10 +139,11 @@ Devuelve ÚNICAMENTE un bloque de código JSON válido con esta estructura exact
         prompt = f"""Actúa como un director de doblaje profesional y traductor audiovisual experto en adaptación de guiones (Script Adaptation & Dubbing Localization).
 A continuación tienes la transcripción en español de un video para ser doblado al PORTUGUÉS DE BRASIL (pt-BR) neutro mediante clonación de voz por IA (TTS) para un canal de trading e inversiones.
 
-📏 REGLA CRÍTICA DE SEGMENTACIÓN (MÁXIMO 150 PALABRAS POR SEGMENTO):
-- LÍMITE MÁXIMO ESTRICTO: NINGÚN segmento debe superar las 150 palabras bajo ninguna circunstancia. Si el orador habla de corrido o expone una idea extensa, DEBES dividirla obligatoriamente en múltiples fragmentos más cortos.
-- RANGO IDEAL: Entre 30 y 100 palabras por segmento. Los fragmentos moderados son indispensables para una síntesis de voz natural y una sincronización precisa con las escenas del video.
-- PUNTOS DE CORTE NATURALES: Divide el texto aprovechando pausas naturales, puntos y seguido, cambios de idea o conectores discursivos (ej. "por lo tanto", "en segundo lugar", "ahora bien", "por ejemplo" / "por exemplo", "então", "além disso"). Jamás agrupes múltiples oraciones complejas en un solo bloque gigante.
+📏 REGLA CRÍTICA DE SEGMENTACIÓN (RANGO OBLIGATORIO: 30 A 60 PALABRAS, MÁXIMO 70-80):
+- RANGO IDEAL OBLIGATORIO: Cada segmento DEBE contener entre 30 y 60 palabras (máximo 70 palabras). Esto equivale a 1 o 2 oraciones breves (unos 10 a 18 segundos de locución).
+- TOPE MÁXIMO ESTRICTO: NINGÚN segmento debe superar las 70-80 palabras bajo ninguna circunstancia. Si el orador expone una idea larga o habla de corrido, DEBES dividirla obligatoriamente en múltiples fragmentos pequeños.
+- ¿POR QUÉ ES OBLIGATORIO?: Los segmentos largos (>70 palabras) causan silencios muertos gigantes al final del segmento, porque el audio sintetizado en portugués avanza de forma continua mientras que el español original tiene pausas y silencios naturales.
+- PUNTOS DE CORTE NATURALES: Corta en puntos y seguido, comas de transición, pausas de respiración o conectores lógicos (ej. "por lo tanto", "ahora bien", "por ejemplo" / "por exemplo", "então", "além disso"). Cada segmento debe coincidir con una sola acción o concepto en pantalla.
 
 🎯 REGLA DE ORO: BALANCE Y CONTEO ESTRICTO DE PALABRAS (RANGO OBLIGATORIO: 90% A 110%)
 En el doblaje por IA, la duración del audio sintetizado depende directamente de la cantidad de palabras:
@@ -151,7 +153,7 @@ En el doblaje por IA, la duración del audio sintetizado depende directamente de
 
 📐 PROCEDIMIENTO OBLIGATORIO DE CONTEO Y CÁLCULO PARA CADA SEGMENTO:
 Antes de redactar la versión final de cada fragmento, DEBES seguir este proceso:
-1. Divide el texto fuente en fragmentos de tamaño moderado (máximo 150 palabras, idealmente entre 30 y 100 palabras).
+1. Divide el texto fuente en fragmentos pequeños (idealmente entre 30 y 60 palabras, nunca más de 70-80 palabras).
 2. Cuenta las palabras exactas de la frase en español del segmento (ejemplo: 45 palabras).
 3. Calcula tu rango objetivo de palabras en portugués: mínimo 90% (41 palabras) y máximo 110% (49 palabras).
 4. Redacta la adaptación en portugués brasileño natural y cuenta cuántas palabras obtuviste:
@@ -173,14 +175,14 @@ Devuelve ÚNICAMENTE un bloque de código JSON válido con esta estructura exact
 [
   {{
     "id": "seg-0",
-    "original": "<frase en español (máximo 150 palabras)>",
+    "original": "<frase en español (entre 30 y 60 palabras, máx 70-80)>",
     "translated": "<adaptación en portugués verificando que tenga entre el 90% y el 110% de palabras>",
     "tone": "Conversational",
     "filename": "segment_000.wav"
   }},
   {{
     "id": "seg-1",
-    "original": "<frase en español (máximo 150 palabras)>",
+    "original": "<frase en español (entre 30 y 60 palabras, máx 70-80)>",
     "translated": "<adaptación en portugués verificando que tenga entre el 90% y el 110% de palabras>",
     "tone": "Explanatory",
     "filename": "segment_001.wav"
