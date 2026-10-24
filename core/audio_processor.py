@@ -141,13 +141,16 @@ class AudioProcessor:
         return samples
 
     def export_mix_audio(self, save_path, vol_orig=1.0, mute_orig=False, vol_dub=1.0, mute_dub=False):
-        """Exporta la mezcla actual a archivo de audio (.wav o .mp3)."""
+        """Exporta la mezcla actual a archivo de audio (.mp3 o .wav)."""
         final_mix = self.get_current_mix(vol_orig, mute_orig, vol_dub, mute_dub)
         if not final_mix:
             raise ValueError("No hay audio cargado para exportar.")
 
-        ext = "mp3" if save_path.lower().endswith(".mp3") else "wav"
-        final_mix.export(save_path, format=ext)
+        ext = "wav" if save_path.lower().endswith(".wav") else "mp3"
+        if ext == "mp3":
+            final_mix.export(save_path, format="mp3", bitrate="320k")
+        else:
+            final_mix.export(save_path, format="wav")
         return save_path
 
     def export_video_with_audio(self, video_path, audio_path, output_video_path):

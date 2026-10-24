@@ -78,7 +78,7 @@ class ProjectManager:
             "master_metadata_file": os.path.join(proj_root, "secciones_master.json"),
             "audio_file": audio_file,
             "video_file": video_file,
-            "export_audio": os.path.join(proj_root, "doblaje_final.wav"),
+            "export_audio": os.path.join(proj_root, "doblaje_final.mp3"),
             "export_video": os.path.join(proj_root, "video_doblado.mp4"),
             "config_file": os.path.join(proj_root, "config.json")
         }

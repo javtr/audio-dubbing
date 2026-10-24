@@ -529,11 +529,11 @@ class TabStudioView(ctk.CTkFrame):
     def _export_audio(self):
         if not self.app.processor:
             return
-        default_name = f"{self.app.current_project}_doblado.wav"
+        default_name = f"{self.app.current_project}_doblado.mp3"
         save_path = filedialog.asksaveasfilename(
-            defaultextension=".wav",
+            defaultextension=".mp3",
             initialfile=default_name,
-            filetypes=[("WAV Audio", "*.wav"), ("MP3 Audio", "*.mp3")],
+            filetypes=[("MP3 Audio", "*.mp3"), ("WAV Audio", "*.wav")],
             title="Guardar Audio Doblado"
         )
         if not save_path:

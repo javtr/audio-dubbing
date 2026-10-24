@@ -515,8 +515,8 @@ class AppUI(ctk.CTk):
             return
             
         save_path = filedialog.asksaveasfilename(
-            defaultextension=".wav", 
-            filetypes=[("WAV files", "*.wav"), ("MP3 files", "*.mp3")],
+            defaultextension=".mp3", 
+            filetypes=[("MP3 files", "*.mp3"), ("WAV files", "*.wav")],
             title="Guardar mezcla final"
         )
         if not save_path: return
