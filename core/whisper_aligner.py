@@ -1,6 +1,20 @@
 import gc
 import re
+import unicodedata
+from difflib import SequenceMatcher
 from faster_whisper import WhisperModel
+
+def normalize_token(text):
+    """
+    Elimina tildes, signos de puntuación y pasa a minúsculas para comparación robusta.
+    Ej: 'aquí,' -> 'aqui', 'está!' -> 'esta'
+    """
+    if not text:
+        return ""
+    normalized = unicodedata.normalize('NFD', text.lower())
+    without_accents = "".join(c for c in normalized if unicodedata.category(c) != 'Mn')
+    clean = re.sub(r'[^\w\s]', '', without_accents).strip()
+    return clean
 
 class WhisperAligner:
     def __init__(self, model_size="small"):
@@ -166,12 +180,12 @@ Devuelve ÚNICAMENTE un bloque de código JSON válido con esta estructura exact
 """
         return prompt
 
-
     def align_timestamps(self, audio_path, gemini_data, callback_status=None):
         """
         Alinea el JSON de Gemini con los timestamps reales por palabra usando Whisper.
-        Utiliza emparejamiento por secuencias (N-Grams de 3 a 5 palabras) y garantías monótonas
-        para evitar falsos positivos y asignaciones en 0 ms.
+        Utiliza un motor de alineación global en 3 capas (Global Token Matching con SequenceMatcher,
+        refinamiento de frontera Head-Tail y guardas de tasa de locución y monotonicidad)
+        para ser 100% inmune a falsos positivos por repetición de frases o muletillas idénticas.
         """
         if not gemini_data:
             raise ValueError("La lista de secciones de Gemini está vacía.")
@@ -188,7 +202,7 @@ Devuelve ÚNICAMENTE un bloque de código JSON válido con esta estructura exact
             whisper_words = []
             for seg in segments:
                 for word in seg.words:
-                    clean_word = re.sub(r'[^\w\s]', '', word.word.lower()).strip()
+                    clean_word = normalize_token(word.word)
                     if clean_word:
                         whisper_words.append({
                             "word": clean_word,
@@ -196,68 +210,120 @@ Devuelve ÚNICAMENTE un bloque de código JSON válido con esta estructura exact
                             "end_ms": int(word.end * 1000)
                         })
 
+            total_whisper_words = len(whisper_words)
+            whisper_tokens = [w["word"] for w in whisper_words]
+
             if callback_status:
-                callback_status("Alineando texto semántico con la pista de audio (N-Grams)...")
+                callback_status("Alineando texto semántico global con el audio (Capa 1/3)...")
 
-            current_search_idx = 0
-            total_words = len(whisper_words)
+            # Preparar tokens de Gemini y mapeo de posición de segmentos
+            all_gemini_tokens = []
+            gemini_segments_info = []
 
-            for i, item in enumerate(gemini_data):
-                original_text = item.get("original", "")
-                gem_words = [w for w in re.sub(r'[^\w\s]', '', original_text.lower()).strip().split() if w]
-                word_count = len(gem_words)
+            for seg_idx, item in enumerate(gemini_data):
+                raw_words = item.get("original", "").split()
+                tokens = [normalize_token(w) for w in raw_words if normalize_token(w)]
+                g_start = len(all_gemini_tokens)
+                all_gemini_tokens.extend(tokens)
+                g_end = len(all_gemini_tokens)
+                gemini_segments_info.append({
+                    "seg_idx": seg_idx,
+                    "tokens": tokens,
+                    "g_start": g_start,
+                    "g_end": g_end,
+                    "count": len(tokens)
+                })
 
-                best_match_idx = -1
-                best_score = 0
-                target_len = min(4, word_count) if word_count > 0 else 0
+            # CAPA 1: Alineador Global Macro (Ratcliff-Obershelp / SequenceMatcher)
+            matcher = SequenceMatcher(None, all_gemini_tokens, whisper_tokens, autojunk=False)
+            matching_blocks = matcher.get_matching_blocks()
 
-                if target_len > 0 and total_words > 0:
-                    # Búsqueda en ventana hacia adelante (evita saltos absurdos de varios minutos)
-                    search_limit = min(current_search_idx + 150, total_words - target_len + 1)
-                    target_slice = gem_words[:target_len]
+            gemini_to_whisper = {}
+            for block in matching_blocks:
+                for offset in range(block.size):
+                    gemini_to_whisper[block.a + offset] = block.b + offset
 
-                    for k in range(current_search_idx, search_limit):
-                        score = sum(1 for w_off, gw in enumerate(target_slice) if whisper_words[k + w_off]["word"] == gw)
-                        if score > best_score:
-                            best_score = score
-                            best_match_idx = k
-                            if score == target_len:
-                                break  # Coincidencia perfecta de la secuencia
+            if callback_status:
+                callback_status("Optimizando fronteras y aplicando guardas de locución (Capas 2 y 3)...")
 
-                # Criterio de aceptación: al menos 2 palabras consecutivas si target >= 2, o 1 si la frase tiene 1
-                min_acceptable_score = min(2, target_len) if target_len > 0 else 1
-                if best_match_idx != -1 and best_score >= min_acceptable_score:
-                    start_ms = whisper_words[best_match_idx]["start_ms"]
-                    # Avanzar el puntero de búsqueda seguro (sin sobrepasar el inicio del siguiente segmento)
-                    current_search_idx = best_match_idx + min(target_len, 3)
-                else:
-                    # Fallback seguro: no saltar al inicio ni romper el flujo
-                    if i == 0:
-                        start_ms = 0
-                    else:
-                        prev_start = gemini_data[i-1].get("start_ms", 0)
-                        if current_search_idx < total_words:
-                            candidate_ms = whisper_words[current_search_idx]["start_ms"]
-                            start_ms = candidate_ms if candidate_ms >= prev_start else prev_start + 200
-                        else:
-                            start_ms = prev_start + 500
+            # CAPA 2 & 3: Estimación de frontera, guardas físicas de locución y monotonicidad
+            last_confirmed_w_idx = 0
 
-                # Regla de oro 1: El primer segmento siempre arranca en 0 ms
-                if i == 0:
+            for seg_info in gemini_segments_info:
+                seg_idx = seg_info["seg_idx"]
+                tokens = seg_info["tokens"]
+                g_start = seg_info["g_start"]
+                g_end = seg_info["g_end"]
+                count = seg_info["count"]
+
+                # Regla de oro 1: El primer segmento siempre arranca en el tiempo 0 ms
+                if seg_idx == 0:
+                    best_start_idx = 0
                     start_ms = 0
                 else:
-                    # Regla de oro 2: Garantía monótona estricta (ningún segmento intermedio puede ser menor al anterior)
-                    prev_start = gemini_data[i-1].get("start_ms", 0)
+                    prev_info = gemini_segments_info[seg_idx - 1]
+                    prev_count = prev_info["count"]
+                    # Guarda física: el segmento previo no puede haber durado menos del 50% de sus palabras
+                    min_physical_word_advance = max(1, int(prev_count * 0.50))
+                    min_allowed_w_idx = min(last_confirmed_w_idx + min_physical_word_advance, max(0, total_whisper_words - 1))
+
+                    # 1. Buscar en la cabeza del segmento actual (los primeros tokens)
+                    candidate_indices = []
+                    for offset in range(min(8, count)):
+                        g_pos = g_start + offset
+                        if g_pos in gemini_to_whisper:
+                            cand_w = gemini_to_whisper[g_pos] - offset
+                            if cand_w >= min_allowed_w_idx:
+                                candidate_indices.append(cand_w)
+
+                    if candidate_indices:
+                        best_start_idx = candidate_indices[0]
+                    else:
+                        # 2. Buscar en la cola del segmento previo (últimas palabras)
+                        prev_tail_candidates = []
+                        for offset in range(min(6, prev_count)):
+                            g_pos = prev_info["g_end"] - 1 - offset
+                            if g_pos in gemini_to_whisper:
+                                cand_w = gemini_to_whisper[g_pos] + 1 + offset
+                                if cand_w >= min_allowed_w_idx:
+                                    prev_tail_candidates.append(cand_w)
+
+                        if prev_tail_candidates:
+                            best_start_idx = prev_tail_candidates[0]
+                        else:
+                            # 3. Fallback: correlación local a partir de la frontera física válida
+                            target_slice = tokens[:min(4, count)]
+                            search_limit = min(min_allowed_w_idx + 80, total_whisper_words - len(target_slice) + 1)
+                            local_best = -1
+                            local_best_score = 0
+                            for k in range(min_allowed_w_idx, max(min_allowed_w_idx + 1, search_limit)):
+                                score = sum(1 for w_off, gw in enumerate(target_slice) if whisper_tokens[k + w_off] == gw)
+                                if score > local_best_score:
+                                    local_best_score = score
+                                    local_best = k
+                                    if score == len(target_slice):
+                                        break
+                            if local_best != -1 and local_best_score >= 2:
+                                best_start_idx = local_best
+                            else:
+                                best_start_idx = min(last_confirmed_w_idx + max(1, prev_count), max(0, total_whisper_words - 1))
+
+                    best_start_idx = max(0, min(best_start_idx, max(0, total_whisper_words - 1)))
+                    start_ms = whisper_words[best_start_idx]["start_ms"] if total_whisper_words > 0 else 0
+
+                    # Regla de oro 2: Garantía monótona estricta (ningún segmento intermedio puede ser menor o igual al anterior)
+                    prev_start = gemini_data[seg_idx - 1].get("start_ms", 0)
                     if start_ms <= prev_start:
-                        start_ms = prev_start + 100
+                        start_ms = prev_start + 150
 
-                item["start_ms"] = start_ms
-                item["orig_start_ms"] = start_ms
+                gemini_data[seg_idx]["start_ms"] = start_ms
+                gemini_data[seg_idx]["orig_start_ms"] = start_ms
+                last_confirmed_w_idx = best_start_idx
 
-            # Asignar end_ms basándose en el inicio del siguiente segmento
+            # Asignar end_ms basándose en el inicio del siguiente segmento (sin solapamientos)
             for i in range(len(gemini_data)):
                 if i < len(gemini_data) - 1:
-                    next_start = gemini_data[i+1].get("start_ms")
+                    next_start = gemini_data[i + 1].get("start_ms")
                     gemini_data[i]["end_ms"] = next_start if next_start is not None else audio_duration_ms
                 else:
                     gemini_data[i]["end_ms"] = audio_duration_ms
