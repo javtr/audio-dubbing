@@ -11,6 +11,7 @@ class TimingValidator:
         - Desorden cronológico (start_ms < anterior start_ms).
         - Duración congelada o negativa (end_ms <= start_ms).
         - Duración desproporcionada (frases muy breves con duraciones excesivas > 25s o segmentos > 50s).
+        - Segmento excesivamente largo (> 150 palabras).
         """
         anomalies = {}
         if not segments_data:
@@ -52,6 +53,10 @@ class TimingValidator:
                 issues.append(f"Duración excesiva ({dur_ms/1000:.1f}s para solo {word_count} palabras)")
             elif dur_ms > 50000:
                 issues.append(f"Duración muy larga ({dur_ms/1000:.1f}s)")
+
+            # 5. Segmento excesivamente largo (> 150 palabras)
+            if word_count > 150:
+                issues.append(f"Segmento excesivamente largo ({word_count} palabras, recomendado ≤ 150)")
 
             if issues:
                 anomalies[seg_id] = issues

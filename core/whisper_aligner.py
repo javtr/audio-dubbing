@@ -80,24 +80,30 @@ class WhisperAligner:
         prompt = f"""Actúa como un director de doblaje profesional y traductor audiovisual experto en adaptación de guiones (Script Adaptation & Dubbing Localization).
 A continuación tienes la transcripción en español de un video para ser doblado al inglés mediante clonación de voz por IA (TTS).
 
+📏 REGLA CRÍTICA DE SEGMENTACIÓN (MÁXIMO 150 PALABRAS POR SEGMENTO):
+- LÍMITE MÁXIMO ESTRICTO: NINGÚN segmento debe superar las 150 palabras bajo ninguna circunstancia. Si el orador habla de corrido o expone una idea extensa, DEBES dividirla obligatoriamente en múltiples fragmentos más cortos.
+- RANGO IDEAL: Entre 30 y 100 palabras por segmento. Los fragmentos moderados son indispensables para una síntesis de voz natural y una sincronización precisa con las escenas del video.
+- PUNTOS DE CORTE NATURALES: Divide el texto aprovechando pausas naturales, puntos y seguido, cambios de idea o conectores discursivos (ej. "por lo tanto", "en segundo lugar", "ahora bien", "por ejemplo"). Jamás agrupes múltiples oraciones complejas en un solo bloque gigante.
+
 🎯 REGLA DE ORO: BALANCE Y CONTEO ESTRICTO DE PALABRAS (RANGO OBLIGATORIO: 90% A 110%)
 En el doblaje por IA, la duración del audio sintetizado depende directamente de la cantidad de palabras:
 - Si la adaptación tiene MENOS DEL 90% de palabras: El audio en inglés termina demasiado rápido, dejando vacíos incómodos de silencio en el video y perdiendo información valiosa.
 - Si la adaptación tiene MÁS DEL 110% de palabras: El audio se ve obligado a acelerarse de manera artificial y excesiva, arruinando la dicción y la naturalidad del locutor.
-- RANGO VÁLIDO Y OBLIGATORIO: La traducción en inglés DEBE tener entre el 90% y el 110% del número de palabras de la frase original en español. El sistema marcará como error cualquier segmento que quede por debajo del 90%.
+- RANGO VÁLIDO Y OBLIGATORIO: La traducción en inglés DEBE tener entre el 90% y el 110% del número de palabras de la frase original en español de ese segmento. El sistema marcará como error cualquier segmento que quede por debajo del 90%.
 
 📐 PROCEDIMIENTO OBLIGATORIO DE CONTEO Y CÁLCULO PARA CADA SEGMENTO:
 Antes de redactar la versión final de cada fragmento, DEBES seguir este proceso:
-1. Cuenta las palabras exactas de la frase en español (ejemplo: 40 palabras).
-2. Calcula tu rango objetivo de palabras en inglés: mínimo 90% (36 palabras) y máximo 110% (44 palabras).
-3. Redacta la adaptación en inglés y cuenta cuántas palabras obtuviste:
-   - Si tu traducción en inglés quedó por debajo del 90% (< 36 palabras): ¡NO LA ENTREGUES ASÍ! Es demasiado corta. Amplía la redacción explicando con mayor detalle, utilizando vocabulario técnico preciso, oraciones completas y descripciones ricas sin perder el sentido.
-   - Si tu traducción superó el 110% (> 44 palabras): Condensa levemente oraciones secundarias sin omitir datos esenciales.
+1. Divide el texto fuente en fragmentos de tamaño moderado (máximo 150 palabras, idealmente entre 30 y 100 palabras).
+2. Cuenta las palabras exactas de la frase en español del segmento (ejemplo: 45 palabras).
+3. Calcula tu rango objetivo de palabras en inglés: mínimo 90% (41 palabras) y máximo 110% (49 palabras).
+4. Redacta la adaptación en inglés y cuenta cuántas palabras obtuviste:
+   - Si tu traducción en inglés quedó por debajo del 90% (< 41 palabras): ¡NO LA ENTREGUES ASÍ! Es demasiado corta. Amplía la redacción explicando con mayor detalle, utilizando vocabulario técnico preciso, oraciones completas y descripciones ricas sin perder el sentido.
+   - Si tu traducción superó el 110% (> 49 palabras): Condensa levemente oraciones secundarias sin omitir datos esenciales.
 
 ⚠️ OTRAS REGLAS OBLIGATORIAS:
 1. **NO RESUMAS NI OMITAS INFORMACIÓN:** No es un resumen. Debes traducir TODOS los conceptos, detalles, pasos técnicos, advertencias y matices expresados en el original.
 2. **NO INFLES CON RELLENO ARTIFICIAL:** No uses muletillas vacías repetitivas. Usa inglés fluido, natural y descriptivo propio de un locutor nativo experto en la materia.
-3. **Segmentación Coherente:** Cada fragmento debe representar una oración o idea completa con puntuación adecuada.
+3. **Puntuación y Ritmo:** Cada fragmento debe terminar con puntuación adecuada (punto, interrogación, etc.) para que el generador de voz entone con naturalidad.
 4. **Tono Emocional:** Asigna a cada fragmento uno de estos 4 tonos exactos según el contexto:
    - "Conversational": Tono casual, neutro, informal o introductorio.
    - "Explanatory": Tono didáctico, explicando conceptos técnicos o pasos con calma.
@@ -109,14 +115,14 @@ Devuelve ÚNICAMENTE un bloque de código JSON válido con esta estructura exact
 [
   {{
     "id": "seg-0",
-    "original": "<frase en español>",
+    "original": "<frase en español (máximo 150 palabras)>",
     "translated": "<adaptación en inglés verificando que tenga entre el 90% y el 110% de palabras>",
     "tone": "Conversational",
     "filename": "segment_000.wav"
   }},
   {{
     "id": "seg-1",
-    "original": "<frase en español>",
+    "original": "<frase en español (máximo 150 palabras)>",
     "translated": "<adaptación en inglés verificando que tenga entre el 90% y el 110% de palabras>",
     "tone": "Explanatory",
     "filename": "segment_001.wav"
@@ -132,24 +138,30 @@ Devuelve ÚNICAMENTE un bloque de código JSON válido con esta estructura exact
         prompt = f"""Actúa como un director de doblaje profesional y traductor audiovisual experto en adaptación de guiones (Script Adaptation & Dubbing Localization).
 A continuación tienes la transcripción en español de un video para ser doblado al PORTUGUÉS DE BRASIL (pt-BR) neutro mediante clonación de voz por IA (TTS) para un canal de trading e inversiones.
 
+📏 REGLA CRÍTICA DE SEGMENTACIÓN (MÁXIMO 150 PALABRAS POR SEGMENTO):
+- LÍMITE MÁXIMO ESTRICTO: NINGÚN segmento debe superar las 150 palabras bajo ninguna circunstancia. Si el orador habla de corrido o expone una idea extensa, DEBES dividirla obligatoriamente en múltiples fragmentos más cortos.
+- RANGO IDEAL: Entre 30 y 100 palabras por segmento. Los fragmentos moderados son indispensables para una síntesis de voz natural y una sincronización precisa con las escenas del video.
+- PUNTOS DE CORTE NATURALES: Divide el texto aprovechando pausas naturales, puntos y seguido, cambios de idea o conectores discursivos (ej. "por lo tanto", "en segundo lugar", "ahora bien", "por ejemplo" / "por exemplo", "então", "além disso"). Jamás agrupes múltiples oraciones complejas en un solo bloque gigante.
+
 🎯 REGLA DE ORO: BALANCE Y CONTEO ESTRICTO DE PALABRAS (RANGO OBLIGATORIO: 90% A 110%)
 En el doblaje por IA, la duración del audio sintetizado depende directamente de la cantidad de palabras:
 - Si la adaptación tiene MENOS DEL 90% de palabras: El audio en portugués termina demasiado rápido, dejando vacíos incómodos de silencio en el video y perdiendo información valiosa.
 - Si la adaptación tiene MÁS DEL 110% de palabras: El audio se ve obligado a acelerarse de manera artificial y excesiva, arruinando la dicción y la naturalidad del locutor.
-- RANGO VÁLIDO Y OBLIGATORIO: La traducción en portugués DEBE tener entre el 90% y el 110% del número de palabras de la frase original en español. El sistema marcará como error cualquier segmento que quede por debajo del 90%.
+- RANGO VÁLIDO Y OBLIGATORIO: La traducción en portugués DEBE tener entre el 90% y el 110% del número de palabras de la frase original en español de ese segmento. El sistema marcará como error cualquier segmento que quede por debajo del 90%.
 
 📐 PROCEDIMIENTO OBLIGATORIO DE CONTEO Y CÁLCULO PARA CADA SEGMENTO:
 Antes de redactar la versión final de cada fragmento, DEBES seguir este proceso:
-1. Cuenta las palabras exactas de la frase en español (ejemplo: 40 palabras).
-2. Calcula tu rango objetivo de palabras en portugués: mínimo 90% (36 palabras) y máximo 110% (44 palabras).
-3. Redacta la adaptación en portugués brasileño natural y cuenta cuántas palabras obtuviste:
-   - Si tu traducción en portugués quedó por debajo del 90% (< 36 palabras): ¡NO LA ENTREGUES ASÍ! Es demasiado corta. Amplía la redacción explicando con mayor detalle, utilizando vocabulario técnico preciso, oraciones completas y descripciones ricas sin perder el sentido original.
-   - Si tu traducción superó el 110% (> 44 palabras): Condensa levemente oraciones secundarias sin omitir datos esenciales.
+1. Divide el texto fuente en fragmentos de tamaño moderado (máximo 150 palabras, idealmente entre 30 y 100 palabras).
+2. Cuenta las palabras exactas de la frase en español del segmento (ejemplo: 45 palabras).
+3. Calcula tu rango objetivo de palabras en portugués: mínimo 90% (41 palabras) y máximo 110% (49 palabras).
+4. Redacta la adaptación en portugués brasileño natural y cuenta cuántas palabras obtuviste:
+   - Si tu traducción en portugués quedó por debajo del 90% (< 41 palabras): ¡NO LA ENTREGUES ASÍ! Es demasiado corta. Amplía la redacción explicando con mayor detalle, utilizando vocabulario técnico preciso, oraciones completas y descripciones ricas sin perder el sentido original.
+   - Si tu traducción superó el 110% (> 49 palabras): Condensa levemente oraciones secundarias sin omitir datos esenciales.
 
 ⚠️ OTRAS REGLAS OBLIGATORIAS:
 1. **NO RESUMAS NI OMITAS INFORMACIÓN:** No es un resumen. Debes traducir TODOS los conceptos, detalles, pasos técnicos, advertencias y matices expresados en el original.
 2. **PORTUGUÉS DE BRASIL FLUIDO Y TÉCNICO:** Usa la terminología estándar del mercado financiero y trading en Brasil (ejemplos: *médias móveis, suporte e resistência, rompimento, pullbacks, footprint, fluxo de ordens, robôs traders, stop loss, gerenciamento de risco*).
-3. **Segmentación Coherente:** Cada fragmento debe representar una oración o idea completa con puntuación adecuada.
+3. **Puntuación y Ritmo:** Cada fragmento debe terminar con puntuación adecuada (punto, interrogación, etc.) para que el generador de voz entone con naturalidad.
 4. **Tono Emocional:** Asigna a cada fragmento uno de estos 4 tonos exactos según el contexto:
    - "Conversational": Tono casual, neutro, informal o introductorio.
    - "Explanatory": Tono didáctico, explicando conceptos técnicos o pasos con calma.
@@ -161,14 +173,14 @@ Devuelve ÚNICAMENTE un bloque de código JSON válido con esta estructura exact
 [
   {{
     "id": "seg-0",
-    "original": "<frase en español>",
+    "original": "<frase en español (máximo 150 palabras)>",
     "translated": "<adaptación en portugués verificando que tenga entre el 90% y el 110% de palabras>",
     "tone": "Conversational",
     "filename": "segment_000.wav"
   }},
   {{
     "id": "seg-1",
-    "original": "<frase en español>",
+    "original": "<frase en español (máximo 150 palabras)>",
     "translated": "<adaptación en portugués verificando que tenga entre el 90% y el 110% de palabras>",
     "tone": "Explanatory",
     "filename": "segment_001.wav"
