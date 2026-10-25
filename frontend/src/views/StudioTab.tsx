@@ -166,8 +166,35 @@ export const StudioTab: React.FC = () => {
     }
   };
 
-  const handleResetMaster = async () => {
-    if (!confirm('¿Deseas restaurar todos los segmentos a sus posiciones y audios iniciales?')) return;
+  const handleResetAllRawAudios = async () => {
+    if (!currentProject) return;
+    if (
+      !confirm(
+        '¿Deseas restaurar TODOS los audios a sus versiones originales de la IA (1.0x)?\n\nSe eliminarán todos los cambios de velocidad y estiramientos previos.'
+      )
+    ) {
+      return;
+    }
+    try {
+      console.log(`[StudioTab] Solicitando reset total a másters raw para proyecto '${currentProject}'...`);
+      const res = await api.resetRawAudios(currentProject);
+      setSegments(res.metadata);
+      loadWaveforms();
+      alert(`¡Éxito! Se restauraron ${res.restored_count} audios al máster original de la IA (1.0x).`);
+    } catch (err: any) {
+      console.error('[StudioTab] Error al restaurar audios originales:', err);
+      alert(`Error al restaurar audios: ${err?.response?.data?.detail || err.message}`);
+    }
+  };
+
+  const handleResetScriptMaster = async () => {
+    if (
+      !confirm(
+        '⚠️ ADVERTENCIA: Esta acción restaurará la estructura inicial del guion de antes de realizar cortes con Whisper o Cuchilla.\n\n¿Estás seguro de que deseas deshacer todas las divisiones de frases?'
+      )
+    ) {
+      return;
+    }
     await revertToMaster();
     loadWaveforms();
   };
@@ -246,12 +273,20 @@ export const StudioTab: React.FC = () => {
           </button>
 
           <button
-            onClick={handleResetMaster}
-            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 text-neutral-300 transition flex items-center gap-1"
-            title="Restablecer marcas de tiempo a la versión inicial maestra"
+            onClick={handleResetAllRawAudios}
+            className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-amber-600/90 hover:bg-amber-500 text-white transition flex items-center gap-1.5 shadow-sm shadow-amber-600/30"
+            title="Restaura todos los audios a sus versiones vírgenes de la IA (1.0x) y reconstruye la mezcla"
           >
             <RotateCcw className="w-3.5 h-3.5" />
-            <span>Reset Tiempos</span>
+            <span>Reset Audios Originales</span>
+          </button>
+
+          <button
+            onClick={handleResetScriptMaster}
+            className="px-2.5 py-1.5 rounded-lg text-[11px] font-normal bg-neutral-900 border border-neutral-800 hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200 transition flex items-center gap-1"
+            title="Deshace las divisiones de cortes y restaura las secciones originales del Paso 1"
+          >
+            <span>Deshacer Cortes</span>
           </button>
         </div>
 

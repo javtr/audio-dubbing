@@ -945,16 +945,20 @@ class AdjustRatioRequest(BaseModel):
     project: str
     segment_id: str
     ratio: float
+    start_ms: Optional[int] = None
 
 @app.post("/api/timeline/adjust-ratio")
 def adjust_segment_ratio(req: AdjustRatioRequest):
-    print(f"[TIMELINE-ADJUST] Solicitud: project={req.project}, segment_id={req.segment_id}, ratio={req.ratio}")
+    print(f"[TIMELINE-ADJUST] Solicitud: project={req.project}, segment_id={req.segment_id}, ratio={req.ratio}, start_ms={req.start_ms}")
     paths = pm.get_project_paths(req.project)
     metadata = pm.load_project_metadata(req.project)
 
     target_seg = next((s for s in metadata if str(s.get("id")) == str(req.segment_id)), None)
     if not target_seg:
         raise HTTPException(status_code=404, detail="Segmento no encontrado.")
+
+    if req.start_ms is not None and req.start_ms >= 0:
+        target_seg["start_ms"] = req.start_ms
 
     updated_seg = process_segment_from_raw(
         paths=paths,
@@ -1040,6 +1044,66 @@ def update_project_timings(req: UpdateTimingsRequest):
     val = TimingValidator.validate(metadata)
     print(f"[TIMINGS-UPDATE] Recálculo completado con éxito para proyecto '{req.project}'.")
     return {"status": "ok", "metadata": metadata, "validation": val}
+
+
+class ResetAudiosRequest(BaseModel):
+    project: str
+    segment_id: Optional[str] = None  # None = reset all segments, or single segment_id
+
+
+@app.post("/api/timeline/reset-raw-audios")
+def reset_raw_audios(req: ResetAudiosRequest):
+    """Restaura uno o todos los segmentos a sus audios máster vírgenes originales de la IA (1.0x)."""
+    import shutil
+    paths = pm.get_project_paths(req.project)
+    metadata = pm.load_project_metadata(req.project)
+    audio_path = paths.get("audio_file")
+    audios_dir = paths.get("audios_dir", "")
+    raw_dir = os.path.join(audios_dir, "raw")
+    
+    if not os.path.exists(raw_dir):
+        raise HTTPException(status_code=400, detail="No se encontró la carpeta de audios máster originales (raw/).")
+
+    from pydub import AudioSegment
+    restored_count = 0
+    target_name = f"segmento '{req.segment_id}'" if req.segment_id else "TODOS los segmentos"
+    print(f"[RESET-RAW] Solicitud de restauración para proyecto '{req.project}' ({target_name})...")
+
+    for seg in metadata:
+        sid = str(seg.get("id"))
+        if req.segment_id and sid != str(req.segment_id):
+            continue
+
+        fname = seg.get("filename", "")
+        if not fname:
+            continue
+
+        raw_path = os.path.join(raw_dir, fname)
+        active_path = os.path.join(audios_dir, fname)
+
+        if os.path.exists(raw_path):
+            shutil.copy(raw_path, active_path)
+            os.utime(active_path, None)
+            raw_len = len(AudioSegment.from_file(raw_path))
+
+            seg["raw_duration_ms"] = raw_len
+            seg["clip_duration_ms"] = raw_len
+            seg["speed_ratio"] = 1.0
+            seg["current_speed_ratio"] = 1.0
+            seg["is_manual_ratio"] = False
+            seg["end_ms"] = seg.get("start_ms", 0) + raw_len
+            restored_count += 1
+            print(f"[RESET-RAW] Restaurado a máster virgen 1.0x: {fname} ({raw_len} ms)")
+
+    pm.save_project_metadata(req.project, metadata)
+
+    # Reconstruir la mezcla versionada
+    processor = AudioProcessor(audio_path, audios_dir, metadata)
+    export_dubbed_mix_versioned(processor, paths, req.project)
+
+    val = TimingValidator.validate(metadata)
+    print(f"[RESET-RAW] Éxito: Se restauraron {restored_count} audios al máster original de IA.")
+    return {"status": "ok", "restored_count": restored_count, "metadata": metadata, "validation": val}
 
 
 class DeleteSegmentRequest(BaseModel):

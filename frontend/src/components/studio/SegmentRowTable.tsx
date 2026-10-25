@@ -96,31 +96,54 @@ export const SegmentRowTable: React.FC<Props> = ({ onRefreshWaveforms }) => {
     setPlayingSegmentId(segId);
   };
 
-  // Ajustar ratio personalizado con FFmpeg atempo
+  // Ajustar ratio personalizado con FFmpeg atempo (y sincronizar inicio ms si fue editado)
   const handleAdjustRatio = async (seg: Segment) => {
     if (!currentProject) return;
     const segId = String(seg.id);
     const r = localRatios[segId] ?? seg.speed_ratio ?? seg.current_speed_ratio ?? 1.0;
+    const startMs = localStarts[segId] ?? seg.start_ms;
 
-    console.log(`[SegmentRowTable] Solicitando ajuste de ratio: seg=${segId}, ratio=${r}`);
+    console.log(`[SegmentRowTable] Solicitando ajuste: seg=${segId}, ratio=${r}, start_ms=${startMs}`);
     setAdjustingId(segId);
     try {
-      const res = await api.adjustSegmentRatio(currentProject, segId, r);
+      const res = await api.adjustSegmentRatio(currentProject, segId, r, startMs);
       const confirmedRatio = res.segment.speed_ratio ?? res.segment.current_speed_ratio ?? r;
       console.log(`[SegmentRowTable] Servidor confirmó: seg=${segId}, ratio=${confirmedRatio}, dur=${res.segment.clip_duration_ms}ms, fin=${res.segment.end_ms}ms`);
       
       updateSegment(seg.id, {
+        start_ms: res.segment.start_ms,
         clip_duration_ms: res.segment.clip_duration_ms,
         speed_ratio: confirmedRatio,
         current_speed_ratio: confirmedRatio,
         is_manual_ratio: true,
         end_ms: res.segment.end_ms,
       });
+      setLocalStarts((prev) => ({ ...prev, [segId]: res.segment.start_ms }));
       setLocalRatios((prev) => ({ ...prev, [segId]: confirmedRatio }));
       onRefreshWaveforms();
     } catch (err: any) {
       console.error(`[SegmentRowTable] Error al ajustar velocidad:`, err);
       alert(`Error al ajustar velocidad: ${err?.response?.data?.detail || err.message}`);
+    } finally {
+      setAdjustingId(null);
+    }
+  };
+
+  // Restaurar este segmento individual a su audio virgen original de la IA (1.0x)
+  const handleResetSegmentAudio = async (seg: Segment) => {
+    if (!currentProject) return;
+    const segId = String(seg.id);
+    console.log(`[SegmentRowTable] Restaurando audio máster original de IA para segmento ${segId}...`);
+    setAdjustingId(segId);
+    try {
+      const res = await api.resetRawAudios(currentProject, segId);
+      useProjectStore.getState().setSegments(res.metadata);
+      setLocalRatios((prev) => ({ ...prev, [segId]: 1.0 }));
+      console.log(`[SegmentRowTable] Segmento ${segId} restaurado a máster 1.0x.`);
+      onRefreshWaveforms();
+    } catch (err: any) {
+      console.error(`[SegmentRowTable] Error al restaurar audio del segmento:`, err);
+      alert(`Error al restaurar audio original: ${err?.response?.data?.detail || err.message}`);
     } finally {
       setAdjustingId(null);
     }
@@ -309,7 +332,7 @@ export const SegmentRowTable: React.FC<Props> = ({ onRefreshWaveforms }) => {
                   <span className="text-neutral-500">x</span>
                 </div>
 
-                {/* Ajustar Button (FFmpeg atempo) */}
+                {/* Botón Ajustar Ratio con FFmpeg */}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -317,7 +340,7 @@ export const SegmentRowTable: React.FC<Props> = ({ onRefreshWaveforms }) => {
                   }}
                   disabled={isAdjusting}
                   className="px-2.5 py-1 rounded bg-sky-600 hover:bg-sky-500 text-white font-bold transition flex items-center gap-1 disabled:opacity-50"
-                  title="Aplica time-stretching con FFmpeg con este ratio exacto"
+                  title="Aplica time-stretching con FFmpeg con este ratio exacto sobre este fragmento"
                 >
                   {isAdjusting ? (
                     <RefreshCw className="w-3 h-3 animate-spin" />
@@ -325,6 +348,19 @@ export const SegmentRowTable: React.FC<Props> = ({ onRefreshWaveforms }) => {
                     <Zap className="w-3 h-3" />
                   )}
                   <span>Ajustar</span>
+                </button>
+
+                {/* Botón Restaurar Audio Original de IA (1.0x) */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleResetSegmentAudio(seg);
+                  }}
+                  disabled={isAdjusting}
+                  className="p-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-amber-400 transition flex items-center justify-center disabled:opacity-50 border border-neutral-700"
+                  title="Restaura este segmento a su audio virgen original de la IA (1.0x)"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
                 </button>
               </div>
             </div>

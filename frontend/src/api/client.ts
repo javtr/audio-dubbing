@@ -134,11 +134,28 @@ export const getAllWaveforms = async (project: string, points = 1600): Promise<i
   return res.data;
 };
 
-export const adjustSegmentRatio = async (project: string, segmentId: string | number, ratio: number) => {
+export const adjustSegmentRatio = async (
+  project: string,
+  segmentId: string | number,
+  ratio: number,
+  startMs?: number
+) => {
   const res = await api.post('/timeline/adjust-ratio', {
     project,
     segment_id: String(segmentId),
     ratio: Number(ratio),
+    start_ms: startMs !== undefined ? Number(startMs) : undefined,
+  });
+  return res.data;
+};
+
+export const resetRawAudios = async (
+  project: string,
+  segmentId?: string | number
+): Promise<{ status: string; restored_count: number; metadata: import('../types').Segment[]; validation: any }> => {
+  const res = await api.post('/timeline/reset-raw-audios', {
+    project,
+    segment_id: segmentId ? String(segmentId) : null,
   });
   return res.data;
 };
