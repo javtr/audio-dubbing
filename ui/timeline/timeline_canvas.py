@@ -29,7 +29,7 @@ class TimelineCanvas:
             w.destroy()
 
         # Altura ampliada (2.2 pulgadas a 85 DPI = ~187 px de altura) para excelente visibilidad
-        self.fig, self.ax = plt.subplots(figsize=(6, 2.2), dpi=85)
+        self.fig, self.ax = plt.subplots(figsize=(6, 3.2), dpi=85)
         self.fig.patch.set_facecolor('#202020')
         self.ax.set_facecolor('#202020')
 

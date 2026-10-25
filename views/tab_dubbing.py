@@ -13,6 +13,7 @@ class TabDubbingView(ctk.CTkFrame):
         super().__init__(master, fg_color="transparent", **kwargs)
         self.app = app
         self.card_widgets = {}
+        self.stop_requested = threading.Event()
         self._build_ui()
 
     def _build_ui(self):
@@ -29,6 +30,18 @@ class TabDubbingView(ctk.CTkFrame):
             command=self._start_dubbing_all
         )
         self.btn_run_all.pack(side="left", padx=5)
+
+        self.btn_stop_dubbing = ctk.CTkButton(
+            top_frame,
+            text="🛑 Detener",
+            font=("Arial", 14, "bold"),
+            width=105,
+            fg_color="#dc3545",
+            hover_color="#c82333",
+            state="disabled",
+            command=self._stop_dubbing_all
+        )
+        self.btn_stop_dubbing.pack(side="left", padx=5)
 
         btn_reload = ctk.CTkButton(top_frame, text="🔄 Recargar", width=100, command=self.refresh)
         btn_reload.pack(side="left", padx=5)
@@ -132,6 +145,11 @@ class TabDubbingView(ctk.CTkFrame):
 
         threading.Thread(target=_worker, daemon=True).start()
 
+    def _stop_dubbing_all(self):
+        self.stop_requested.set()
+        self.btn_stop_dubbing.configure(state="disabled", text="Deteniendo...")
+        self.lbl_t2_progress.configure(text="Deteniendo tras el segmento actual...", text_color="#ffc107")
+
     def _start_dubbing_all(self):
         if not self.app.pinokio.check_connection():
             messagebox.showerror(
@@ -145,11 +163,20 @@ class TabDubbingView(ctk.CTkFrame):
             messagebox.showwarning("Atención", "No hay segmentos para doblar.")
             return
 
+        self.stop_requested.clear()
         self.btn_run_all.configure(state="disabled", text="Procesando...")
+        self.btn_stop_dubbing.configure(state="normal", text="🛑 Detener")
 
         def _worker():
             total = len(segments)
+            was_stopped = False
+            generated_count = 0
+
             for i, seg in enumerate(segments):
+                if self.stop_requested.is_set():
+                    was_stopped = True
+                    break
+
                 card = self.card_widgets.get(seg['id'])
                 if card:
                     self.app.run_on_ui_thread(card.set_processing)
@@ -158,12 +185,15 @@ class TabDubbingView(ctk.CTkFrame):
                 )
                 try:
                     self._generate_segment_voice(seg)
+                    generated_count += 1
                     if card:
                         self.app.run_on_ui_thread(card.set_done)
                 except Exception as e:
                     print(f"[ERROR] Error generando segmento {seg['id']}: {e}")
+                    if card:
+                        self.app.run_on_ui_thread(card.update_status)
 
-            self.app.run_on_ui_thread(self._on_dubbing_all_finished)
+            self.app.run_on_ui_thread(lambda: self._on_dubbing_all_finished(was_stopped, generated_count, total))
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -195,8 +225,13 @@ class TabDubbingView(ctk.CTkFrame):
             model_size="1.7B"
         )
 
-    def _on_dubbing_all_finished(self):
+    def _on_dubbing_all_finished(self, was_stopped=False, count=0, total=0):
         self.btn_run_all.configure(state="normal", text="🚀 Solicitar Todos a Pinokio")
-        self.lbl_t2_progress.configure(text="¡Todos los segmentos generados!", text_color="#28a745")
+        self.btn_stop_dubbing.configure(state="disabled", text="🛑 Detener")
         self.app.notify_audio_updated()
-        messagebox.showinfo("Completado", "Se han generado todos los audios en la carpeta 'audios' del proyecto.")
+        if was_stopped:
+            self.lbl_t2_progress.configure(text=f"Generación detenida en {count} de {total}.", text_color="#ffb74d")
+            messagebox.showinfo("Proceso Detenido", f"Se detuvo la solicitud a Pinokio.\nSe completaron {count} de {total} segmentos.")
+        else:
+            self.lbl_t2_progress.configure(text="¡Todos los segmentos generados!", text_color="#28a745")
+            messagebox.showinfo("Completado", "Se han generado todos los audios en la carpeta 'audios' del proyecto.")

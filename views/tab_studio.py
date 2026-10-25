@@ -33,27 +33,26 @@ class TabStudioView(ctk.CTkFrame):
         self._bind_shortcuts()
 
     def _build_ui(self):
-        self.grid_rowconfigure(0, weight=4)
-        self.grid_rowconfigure(1, weight=2)
+        self.grid_rowconfigure(0, weight=1)  # Contenedor desplazable principal
+        self.grid_rowconfigure(1, weight=0)  # Barra inferior fija (Play, Export, etc.)
         self.grid_columnconfigure(0, weight=1)
 
-        # --- ZONA SUPERIOR: FORMAS DE ONDA ---
-        wave_frame = ctk.CTkFrame(self)
-        wave_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=5)
+        # --- CONTENEDOR DESPLAZABLE PRINCIPAL ---
+        self.main_scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        self.main_scroll.grid(row=0, column=0, sticky="nsew", padx=4, pady=(4, 0))
+        self.main_scroll.grid_columnconfigure(0, weight=1)
+
+        # 1. ZONA SUPERIOR: FORMAS DE ONDA ALTAS
+        wave_frame = ctk.CTkFrame(self.main_scroll)
+        wave_frame.pack(fill="x", padx=6, pady=4)
         wave_frame.grid_columnconfigure(0, weight=1)
-        wave_frame.grid_rowconfigure(0, weight=1)
-        wave_frame.grid_rowconfigure(1, weight=1)
-        wave_frame.grid_rowconfigure(2, weight=0)
 
         # 1. Pista Original
         orig_box = ctk.CTkFrame(wave_frame)
-        orig_box.grid(row=0, column=0, sticky="nsew", padx=5, pady=3)
-        orig_box.grid_columnconfigure(0, weight=1)
-        orig_box.grid_rowconfigure(1, weight=1)
-        orig_box.grid_rowconfigure(2, weight=0)
+        orig_box.pack(fill="x", padx=5, pady=4)
 
         orig_header = ctk.CTkFrame(orig_box, fg_color="transparent")
-        orig_header.grid(row=0, column=0, sticky="ew", padx=8, pady=2)
+        orig_header.pack(fill="x", padx=8, pady=(4, 2))
         ctk.CTkLabel(orig_header, text="Pista Original", font=("Arial", 12, "bold")).pack(side="left")
         self.btn_mute_orig = ctk.CTkButton(orig_header, text="Mute", width=55, height=24, command=self._toggle_mute_orig)
         self.btn_mute_orig.pack(side="left", padx=10)
@@ -61,12 +60,12 @@ class TabStudioView(ctk.CTkFrame):
         self.slider_vol_orig.set(1.0)
         self.slider_vol_orig.pack(side="left", padx=5)
 
-        self.orig_canvas_frame = ctk.CTkFrame(orig_box)
-        self.orig_canvas_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=2)
+        self.orig_canvas_frame = ctk.CTkFrame(orig_box, height=290)
+        self.orig_canvas_frame.pack(fill="x", expand=True, padx=5, pady=2)
         self.orig_canvas = TimelineCanvas(self.orig_canvas_frame, is_dubbed=False)
 
         orig_footer = ctk.CTkFrame(orig_box, height=26, fg_color="#181818", corner_radius=4)
-        orig_footer.grid(row=2, column=0, sticky="ew", padx=5, pady=(1, 3))
+        orig_footer.pack(fill="x", padx=5, pady=(1, 3))
         self.lbl_orig_hover = ctk.CTkLabel(
             orig_footer,
             text="Pasa el cursor sobre la onda para inspeccionar el texto...",
@@ -78,13 +77,10 @@ class TabStudioView(ctk.CTkFrame):
 
         # 2. Pista Doblada
         dub_box = ctk.CTkFrame(wave_frame)
-        dub_box.grid(row=1, column=0, sticky="nsew", padx=5, pady=3)
-        dub_box.grid_columnconfigure(0, weight=1)
-        dub_box.grid_rowconfigure(1, weight=1)
-        dub_box.grid_rowconfigure(2, weight=0)
+        dub_box.pack(fill="x", padx=5, pady=4)
 
         dub_header = ctk.CTkFrame(dub_box, fg_color="transparent")
-        dub_header.grid(row=0, column=0, sticky="ew", padx=8, pady=2)
+        dub_header.pack(fill="x", padx=8, pady=(4, 2))
         ctk.CTkLabel(dub_header, text="Pista Doblada", font=("Arial", 12, "bold")).pack(side="left")
         self.btn_mute_dub = ctk.CTkButton(dub_header, text="Mute", width=55, height=24, command=self._toggle_mute_dub)
         self.btn_mute_dub.pack(side="left", padx=8)
@@ -121,12 +117,12 @@ class TabStudioView(ctk.CTkFrame):
         )
         self.btn_reset_dub.pack(side="right", padx=10)
 
-        self.dub_canvas_frame = ctk.CTkFrame(dub_box)
-        self.dub_canvas_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=2)
+        self.dub_canvas_frame = ctk.CTkFrame(dub_box, height=290)
+        self.dub_canvas_frame.pack(fill="x", expand=True, padx=5, pady=2)
         self.dub_canvas = TimelineCanvas(self.dub_canvas_frame, is_dubbed=True)
 
         dub_footer = ctk.CTkFrame(dub_box, height=26, fg_color="#181818", corner_radius=4)
-        dub_footer.grid(row=2, column=0, sticky="ew", padx=5, pady=(1, 3))
+        dub_footer.pack(fill="x", padx=5, pady=(1, 3))
         self.lbl_dub_hover = ctk.CTkLabel(
             dub_footer,
             text="Pasa el cursor sobre la onda doblada para inspeccionar el texto...",
@@ -138,7 +134,7 @@ class TabStudioView(ctk.CTkFrame):
 
         # 3. Barra de Navegación y Zoom Horizontal
         zoom_nav_frame = ctk.CTkFrame(wave_frame, height=36, fg_color="#181818", corner_radius=6)
-        zoom_nav_frame.grid(row=2, column=0, sticky="ew", padx=5, pady=(2, 4))
+        zoom_nav_frame.pack(fill="x", padx=5, pady=(2, 6))
         zoom_nav_frame.grid_columnconfigure(3, weight=1)
 
         self.btn_zoom_out = ctk.CTkButton(
@@ -170,13 +166,9 @@ class TabStudioView(ctk.CTkFrame):
         )
         self.btn_zoom_fit.grid(row=0, column=4, padx=(5, 10), pady=4)
 
-        # --- ZONA MEDIA: SEGMENTOS GRANULARES ---
-        self.mid_scroll = ctk.CTkScrollableFrame(self, label_text="Ajuste Fino de Segmentos")
-        self.mid_scroll.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
-
-        # --- BARRA DE PROGRESO / SEEK ---
-        seek_frame = ctk.CTkFrame(self)
-        seek_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=5)
+        # --- ZONA MEDIA: BARRA DE PROGRESO / SEEK ---
+        seek_frame = ctk.CTkFrame(self.main_scroll)
+        seek_frame.pack(fill="x", padx=6, pady=6)
 
         self.seek_slider = ctk.CTkSlider(seek_frame, from_=0, to=100, command=self._on_seek_change)
         self.seek_slider.set(0)
@@ -187,9 +179,17 @@ class TabStudioView(ctk.CTkFrame):
         self.lbl_time = ctk.CTkLabel(seek_frame, text="0 ms / 0 ms", width=150, font=("Consolas", 12, "bold"))
         self.lbl_time.pack(side="right", padx=10)
 
-        # --- ZONA INFERIOR: BOTONES GLOBALES Y EXPORTACIÓN ---
+        # --- ZONA INFERIOR: AJUSTE FINO DE SEGMENTOS ---
+        mid_header = ctk.CTkFrame(self.main_scroll, fg_color="transparent")
+        mid_header.pack(fill="x", padx=10, pady=(12, 4))
+        ctk.CTkLabel(mid_header, text="⚙️ Ajuste Fino de Segmentos", font=("Arial", 14, "bold"), text_color="#cbd5e1").pack(side="left")
+
+        self.mid_scroll = ctk.CTkFrame(self.main_scroll, fg_color="transparent")
+        self.mid_scroll.pack(fill="x", padx=6, pady=(0, 20))
+
+        # --- BARRA FIJA INFERIOR: BOTONES GLOBALES Y EXPORTACIÓN ---
         bot_frame = ctk.CTkFrame(self)
-        bot_frame.grid(row=3, column=0, sticky="ew", padx=10, pady=8)
+        bot_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=8)
 
         self.btn_play_mix = ctk.CTkButton(
             bot_frame, text="▶ Reproducir Mezcla", font=("Arial", 14, "bold"),
