@@ -31,7 +31,20 @@ export const StudioTab: React.FC = () => {
     revertToMaster,
   } = useProjectStore();
 
-  const [zoom, setZoom] = useState(40); // Pixels per second
+  const [zoom, setZoom] = useState(() => {
+    try {
+      const saved = localStorage.getItem('studio_zoom');
+      return saved ? Math.max(10, Math.min(320, Number(saved))) : 40;
+    } catch {
+      return 40;
+    }
+  }); // Pixels per second
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('studio_zoom', String(zoom));
+    } catch {}
+  }, [zoom]);
   const [viewOffsetMs, setViewOffsetMs] = useState(0);
   const [activeTool, setActiveTool] = useState<'cursor' | 'razor'>('cursor');
 

@@ -44,6 +44,125 @@ tts_client = PinokioClient(base_url="http://127.0.0.1:7860")
 
 # Global stop flag for batch TTS
 stop_tts_event = threading.Event()
+mix_export_lock = threading.Lock()
+
+
+def calculate_segment_speed_ratio(raw_duration_ms: int, target_span_ms: int, manual_ratio: Optional[float] = None) -> float:
+    """Calcula ratio de velocidad con límite inferior 0.85x y sin límite superior."""
+    if manual_ratio is not None and manual_ratio > 0:
+        return round(float(manual_ratio), 2)
+    if target_span_ms <= 0 or raw_duration_ms <= 0:
+        return 1.0
+    
+    raw_ratio = raw_duration_ms / float(target_span_ms)
+    
+    # Si necesita acelerar (> 1.0): sin límite superior para evitar solapes
+    if raw_ratio > 1.0:
+        return round(raw_ratio, 2)
+    
+    # Si necesita desacelerar (< 1.0): NUNCA bajar de 0.85x
+    if raw_ratio < 0.85:
+        return 0.85
+        
+    return round(raw_ratio, 2)
+
+
+def process_segment_from_raw(paths: dict, segment: dict, requested_ratio: Optional[float] = None, is_manual: bool = False):
+    """Procesa un segmento desde su audio virgen inmutable en audios/raw/ sin estiramiento destructivo."""
+    import shutil
+    import subprocess
+    audios_dir = paths.get("audios_dir", "")
+    raw_dir = os.path.join(audios_dir, "raw")
+    os.makedirs(raw_dir, exist_ok=True)
+    
+    filename = segment.get("filename", "")
+    if not filename:
+        return segment
+        
+    raw_path = os.path.join(raw_dir, filename)
+    active_path = os.path.join(audios_dir, filename)
+    
+    # Salvaguardar en raw/ si aún no existe
+    if not os.path.exists(raw_path) and os.path.exists(active_path):
+        shutil.copy2(active_path, raw_path)
+        
+    if not os.path.exists(raw_path):
+        return segment
+        
+    from pydub import AudioSegment
+    raw_audio = AudioSegment.from_file(raw_path)
+    raw_len = len(raw_audio)
+    target_span = segment.get("end_ms", 0) - segment.get("start_ms", 0)
+    
+    final_ratio = calculate_segment_speed_ratio(
+        raw_duration_ms=raw_len,
+        target_span_ms=target_span,
+        manual_ratio=requested_ratio if is_manual else segment.get("speed_ratio") if segment.get("is_manual_ratio") else None
+    )
+    
+    if abs(final_ratio - 1.0) < 0.005:
+        shutil.copy2(raw_path, active_path)
+        clip_len = raw_len
+    else:
+        temp_dir = os.path.join(paths["root"], "temp")
+        os.makedirs(temp_dir, exist_ok=True)
+        temp_out = os.path.join(temp_dir, f"stretched_{final_ratio:.3f}_{filename}")
+        
+        ratio_clamped = max(0.5, min(final_ratio, 100.0))
+        cmd = [
+            "ffmpeg", "-y", "-i", raw_path,
+            "-filter:a", f"atempo={ratio_clamped}",
+            temp_out
+        ]
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        shutil.copy2(temp_out, active_path)
+        clip_len = len(AudioSegment.from_file(active_path))
+        
+    segment["raw_duration_ms"] = raw_len
+    segment["clip_duration_ms"] = clip_len
+    segment["speed_ratio"] = final_ratio
+    segment["current_speed_ratio"] = final_ratio
+    segment["is_manual_ratio"] = is_manual
+    
+    # Invalidar mix global para forzar rebuild limpio
+    mix_file = os.path.join(paths["root"], "mix", "dubbed_mix.mp3")
+    if os.path.exists(mix_file):
+        try:
+            os.remove(mix_file)
+        except Exception:
+            pass
+            
+    return segment
+
+
+def export_dubbed_mix_atomic(processor, mix_file: str) -> bool:
+    """Exporta dubbed_mix.mp3 de forma atómica con cerrojo de subprocesos y archivo temporal."""
+    with mix_export_lock:
+        mix = processor.mix_dubbed_audio(force=True)
+        if not mix:
+            return False
+            
+        mix_dir = os.path.dirname(mix_file)
+        os.makedirs(mix_dir, exist_ok=True)
+        temp_mix_file = f"{mix_file}.tmp_{os.getpid()}_{threading.get_ident()}.mp3"
+        
+        try:
+            mix.export(temp_mix_file, format="mp3", bitrate="192k")
+            if os.path.exists(mix_file):
+                try:
+                    os.remove(mix_file)
+                except Exception:
+                    pass
+            os.replace(temp_mix_file, mix_file)
+            return True
+        except Exception as e:
+            print("Error en exportación atómica de mezcla:", e)
+            if os.path.exists(temp_mix_file):
+                try:
+                    os.remove(temp_mix_file)
+                except Exception:
+                    pass
+            return False
 
 # WebSocket Connection Manager
 class ConnectionManager:
@@ -146,20 +265,45 @@ def get_project(name: str):
 
     # Calculate actual speeds for each segment with generated wav
     audios_dir = paths.get("audios_dir", "")
+    raw_dir = os.path.join(audios_dir, "raw") if audios_dir else ""
+    from pydub import AudioSegment
     for seg in metadata:
         fname = seg.get("filename", "")
-        fpath = os.path.join(audios_dir, fname)
+        fpath = os.path.join(audios_dir, fname) if fname and audios_dir else ""
+        raw_path = os.path.join(raw_dir, fname) if fname and raw_dir and os.path.exists(raw_dir) else ""
         target_span = seg.get("end_ms", 0) - seg.get("start_ms", 0)
-        if os.path.exists(fpath) and target_span > 0:
+
+        raw_len = 0
+        if raw_path and os.path.exists(raw_path):
             try:
-                from pydub import AudioSegment
+                raw_len = len(AudioSegment.from_file(raw_path))
+            except Exception:
+                pass
+        elif fpath and os.path.exists(fpath):
+            try:
+                raw_len = len(AudioSegment.from_file(fpath))
+            except Exception:
+                pass
+
+        seg["raw_duration_ms"] = raw_len
+
+        if fpath and os.path.exists(fpath) and target_span > 0:
+            try:
                 clip_len = len(AudioSegment.from_file(fpath))
                 seg["clip_duration_ms"] = clip_len
-                seg["current_speed_ratio"] = round(clip_len / float(target_span), 2)
+                if seg.get("is_manual_ratio") and seg.get("speed_ratio"):
+                    r = round(float(seg["speed_ratio"]), 2)
+                    seg["speed_ratio"] = r
+                    seg["current_speed_ratio"] = r
+                else:
+                    auto_r = calculate_segment_speed_ratio(raw_len or clip_len, target_span)
+                    seg["speed_ratio"] = auto_r
+                    seg["current_speed_ratio"] = auto_r
             except Exception:
                 pass
         else:
             seg["clip_duration_ms"] = 0
+            seg["speed_ratio"] = 1.0
             seg["current_speed_ratio"] = 1.0
 
     return {
@@ -442,10 +586,19 @@ def generate_single_tts(req: GenerateSingleTTSRequest):
     from pydub import AudioSegment
     clip_dur = len(AudioSegment.from_file(out_file))
     target_span = target_seg.get("end_ms", 0) - target_seg.get("start_ms", 0)
-    speed_ratio = round(clip_dur / float(target_span), 2) if target_span > 0 else 1.0
+    speed_ratio = calculate_segment_speed_ratio(clip_dur, target_span)
 
+    # Save copy to audios/raw/ as untouched master
+    raw_dir = os.path.join(paths["audios_dir"], "raw")
+    os.makedirs(raw_dir, exist_ok=True)
+    import shutil
+    shutil.copy2(out_file, os.path.join(raw_dir, target_seg["filename"]))
+
+    target_seg["raw_duration_ms"] = clip_dur
     target_seg["clip_duration_ms"] = clip_dur
+    target_seg["speed_ratio"] = speed_ratio
     target_seg["current_speed_ratio"] = speed_ratio
+    target_seg["is_manual_ratio"] = False
     pm.save_project_metadata(req.project, metadata)
 
     # Invalidate old dubbed mix file
@@ -531,10 +684,19 @@ def generate_batch_tts(req: GenerateBatchTTSRequest):
                 from pydub import AudioSegment
                 clip_dur = len(AudioSegment.from_file(out_file))
                 target_span = target_seg.get("end_ms", 0) - target_seg.get("start_ms", 0)
-                speed_ratio = round(clip_dur / float(target_span), 2) if target_span > 0 else 1.0
+                speed_ratio = calculate_segment_speed_ratio(clip_dur, target_span)
 
+                # Save copy to audios/raw/ as untouched master
+                raw_dir = os.path.join(paths["audios_dir"], "raw")
+                os.makedirs(raw_dir, exist_ok=True)
+                import shutil
+                shutil.copy2(out_file, os.path.join(raw_dir, target_seg["filename"]))
+
+                target_seg["raw_duration_ms"] = clip_dur
                 target_seg["clip_duration_ms"] = clip_dur
+                target_seg["speed_ratio"] = speed_ratio
                 target_seg["current_speed_ratio"] = speed_ratio
+                target_seg["is_manual_ratio"] = False
 
                 # Remove old mix file so next playback will build fresh
                 mix_file = os.path.join(paths["root"], "mix", "dubbed_mix.mp3")
@@ -649,10 +811,8 @@ def stream_dubbed_audio(project: str, force: bool = False):
 
     if rebuild:
         processor = AudioProcessor(audio_path, audios_dir, metadata)
-        mix = processor.mix_dubbed_audio(force=True)
-        if mix:
-            mix.export(mix_file, format="mp3", bitrate="192k")
-        else:
+        success = export_dubbed_mix_atomic(processor, mix_file)
+        if not success:
             raise HTTPException(status_code=404, detail="No se pudo generar la mezcla doblada.")
 
     if not os.path.exists(mix_file):
@@ -697,9 +857,8 @@ def get_all_waveforms(project: str, points: int = 1600):
                 total_dur_ms = len(dub_mix)
             dub_peaks = compute_min_max_waveform(dub_mix, num_bins=points)
 
-            # Keep dubbed_mix.mp3 synchronized
+            # Keep dubbed_mix.mp3 synchronized atomically
             mix_dir = os.path.join(paths["root"], "mix")
-            os.makedirs(mix_dir, exist_ok=True)
             mix_file = os.path.join(mix_dir, "dubbed_mix.mp3")
             need_export = not os.path.exists(mix_file)
             if not need_export and audios_dir and os.path.exists(audios_dir):
@@ -707,7 +866,7 @@ def get_all_waveforms(project: str, points: int = 1600):
                 if any(os.path.getmtime(os.path.join(audios_dir, f)) > mix_mtime for f in os.listdir(audios_dir) if f.endswith(".wav")):
                     need_export = True
             if need_export:
-                dub_mix.export(mix_file, format="mp3", bitrate="192k")
+                export_dubbed_mix_atomic(processor, mix_file)
     except Exception as e:
         print("Error mixing dubbed audio for waveform:", e)
 
@@ -750,32 +909,23 @@ class AdjustRatioRequest(BaseModel):
 
 @app.post("/api/timeline/adjust-ratio")
 def adjust_segment_ratio(req: AdjustRatioRequest):
-    import shutil
     paths = pm.get_project_paths(req.project)
     metadata = pm.load_project_metadata(req.project)
-    audios_dir = paths.get("audios_dir", "")
 
     target_seg = next((s for s in metadata if str(s.get("id")) == str(req.segment_id)), None)
     if not target_seg:
         raise HTTPException(status_code=404, detail="Segmento no encontrado.")
 
-    processor = AudioProcessor(paths.get("audio_file"), audios_dir, metadata)
-    processed_audio, actual_ratio = processor.process_segment(target_seg, manual_ratio=req.ratio)
-    
-    from pydub import AudioSegment
-    target_span = target_seg.get("end_ms", 0) - target_seg.get("start_ms", 0)
-    out_name = f"stretched_{req.ratio:.3f}_{target_seg['filename']}"
-    out_path = os.path.join(processor.temp_dir, out_name)
-    if os.path.exists(out_path):
-        shutil.copy2(out_path, os.path.join(audios_dir, target_seg["filename"]))
-
-    clip_len = len(AudioSegment.from_file(os.path.join(audios_dir, target_seg["filename"])))
-    target_seg["clip_duration_ms"] = clip_len
-    target_seg["current_speed_ratio"] = round(clip_len / float(target_span), 2) if target_span > 0 else req.ratio
+    updated_seg = process_segment_from_raw(
+        paths=paths,
+        segment=target_seg,
+        requested_ratio=req.ratio,
+        is_manual=True
+    )
 
     pm.save_project_metadata(req.project, metadata)
     val = TimingValidator.validate(metadata)
-    return {"status": "ok", "segment": target_seg, "metadata": metadata, "validation": val}
+    return {"status": "ok", "segment": updated_seg, "metadata": metadata, "validation": val}
 
 
 class TimingItem(BaseModel):

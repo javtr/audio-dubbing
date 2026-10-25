@@ -29,14 +29,27 @@ export const SegmentRowTable: React.FC<Props> = ({ onRefreshWaveforms }) => {
   const [localRatios, setLocalRatios] = useState<Record<string, number>>({});
 
   useEffect(() => {
-    const sMap: Record<string, number> = {};
-    const rMap: Record<string, number> = {};
-    segments.forEach((s) => {
-      sMap[String(s.id)] = s.start_ms;
-      rMap[String(s.id)] = s.current_speed_ratio || 1.0;
+    setLocalStarts((prev) => {
+      const nextStarts = { ...prev };
+      segments.forEach((s) => {
+        const sid = String(s.id);
+        if (nextStarts[sid] === undefined) {
+          nextStarts[sid] = s.start_ms;
+        }
+      });
+      return nextStarts;
     });
-    setLocalStarts(sMap);
-    setLocalRatios(rMap);
+
+    setLocalRatios((prev) => {
+      const nextRatios = { ...prev };
+      segments.forEach((s) => {
+        const sid = String(s.id);
+        if (nextRatios[sid] === undefined) {
+          nextRatios[sid] = s.speed_ratio ?? s.current_speed_ratio ?? 1.0;
+        }
+      });
+      return nextRatios;
+    });
   }, [segments]);
 
   // Play individual segment slice
@@ -68,15 +81,19 @@ export const SegmentRowTable: React.FC<Props> = ({ onRefreshWaveforms }) => {
   const handleAdjustRatio = async (seg: Segment) => {
     if (!currentProject) return;
     const segId = String(seg.id);
-    const r = localRatios[segId] ?? seg.current_speed_ratio ?? 1.0;
+    const r = localRatios[segId] ?? seg.speed_ratio ?? seg.current_speed_ratio ?? 1.0;
 
     setAdjustingId(segId);
     try {
       const res = await api.adjustSegmentRatio(currentProject, segId, r);
+      const confirmedRatio = res.segment.speed_ratio ?? res.segment.current_speed_ratio ?? r;
       updateSegment(seg.id, {
         clip_duration_ms: res.segment.clip_duration_ms,
-        current_speed_ratio: res.segment.current_speed_ratio,
+        speed_ratio: confirmedRatio,
+        current_speed_ratio: confirmedRatio,
+        is_manual_ratio: true,
       });
+      setLocalRatios((prev) => ({ ...prev, [segId]: confirmedRatio }));
       onRefreshWaveforms();
     } catch (err: any) {
       alert(`Error al ajustar velocidad: ${err?.response?.data?.detail || err.message}`);
@@ -159,7 +176,7 @@ export const SegmentRowTable: React.FC<Props> = ({ onRefreshWaveforms }) => {
           const isSelected = selectedSegmentId === segId;
           const isPlaying = playingSegmentId === segId;
           const isAdjusting = adjustingId === segId;
-          const ratio = localRatios[segId] ?? seg.current_speed_ratio ?? 1.0;
+          const ratio = localRatios[segId] ?? seg.speed_ratio ?? seg.current_speed_ratio ?? 1.0;
           const startVal = localStarts[segId] ?? seg.start_ms;
 
           const isGoodRatio = ratio >= 0.90 && ratio <= 1.20;

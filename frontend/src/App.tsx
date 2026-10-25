@@ -27,9 +27,15 @@ export const App: React.FC = () => {
       <Navbar />
 
       <main className="flex-1 pb-10">
-        {activeTab === 'script' && <ScriptTab />}
-        {activeTab === 'dubbing' && <DubbingTab />}
-        {activeTab === 'studio' && <StudioTab />}
+        <div className={activeTab === 'script' ? 'block' : 'hidden'}>
+          <ScriptTab />
+        </div>
+        <div className={activeTab === 'dubbing' ? 'block' : 'hidden'}>
+          <DubbingTab />
+        </div>
+        <div className={activeTab === 'studio' ? 'block' : 'hidden'}>
+          <StudioTab />
+        </div>
       </main>
     </div>
   );

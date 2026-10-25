@@ -53,27 +53,42 @@ class AudioProcessor:
         Procesa el segmento de audio doblado:
         Aplica time-stretching con FFmpeg si excede la duración objetivo o si se especifica ratio manual.
         """
-        filename = segment["filename"]
-        filepath = os.path.join(self.audios_dir, filename)
-
-        if not os.path.exists(filepath):
+        filename = segment.get("filename", "")
+        if not filename:
             return None, 1.0
 
-        audio = AudioSegment.from_file(filepath)
+        raw_path = os.path.join(self.audios_dir, "raw", filename) if self.audios_dir else ""
+        if raw_path and os.path.exists(raw_path):
+            source_filepath = raw_path
+        else:
+            source_filepath = os.path.join(self.audios_dir, filename) if self.audios_dir else ""
+
+        if not os.path.exists(source_filepath):
+            return None, 1.0
+
+        audio = AudioSegment.from_file(source_filepath)
         actual_duration = len(audio)
         target_duration = segment.get("end_ms", 0) - segment.get("start_ms", 0)
 
         ratio = 1.0
         if manual_ratio is not None:
             ratio = manual_ratio
-        elif actual_duration > target_duration and target_duration > 0:
-            ratio = actual_duration / target_duration
+        elif segment.get("is_manual_ratio") and segment.get("speed_ratio"):
+            ratio = float(segment["speed_ratio"])
+        elif target_duration > 0 and actual_duration > 0:
+            raw_r = actual_duration / float(target_duration)
+            if raw_r > 1.0:
+                ratio = raw_r
+            elif raw_r < 0.85:
+                ratio = 0.85
+            else:
+                ratio = raw_r
 
-        if ratio != 1.0:
+        if abs(ratio - 1.0) >= 0.01:
             out_name = f"stretched_{ratio:.3f}_{filename}"
             out_path = os.path.join(self.temp_dir, out_name)
-            if not os.path.exists(out_path) or os.path.getmtime(out_path) < os.path.getmtime(filepath):
-                self._apply_atempo(filepath, out_path, ratio)
+            if not os.path.exists(out_path) or os.path.getmtime(out_path) < os.path.getmtime(source_filepath):
+                self._apply_atempo(source_filepath, out_path, ratio)
             processed_audio = AudioSegment.from_file(out_path)
         else:
             processed_audio = audio

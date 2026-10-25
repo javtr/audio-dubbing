@@ -8,6 +8,9 @@ export interface Segment {
   translated: string;
   filename: string;
   clip_duration_ms?: number;
+  raw_duration_ms?: number;
+  speed_ratio?: number;
+  is_manual_ratio?: boolean;
   current_speed_ratio?: number;
 }
 
