@@ -1,0 +1,202 @@
+import React, { useState } from 'react';
+import { useProjectStore } from '../stores/useProjectStore';
+import { Folder, Plus, Radio, RefreshCw, Sparkles, CheckCircle2, AlertTriangle } from 'lucide-react';
+import * as api from '../api/client';
+
+export const Navbar: React.FC = () => {
+  const {
+    projectsList,
+    currentProject,
+    language,
+    activeTab,
+    isTTSConnected,
+    ttsUrl,
+    setActiveTab,
+    selectProject,
+    loadProjectsList,
+    checkTTS,
+  } = useProjectStore();
+
+  const [showNewModal, setShowNewModal] = useState(false);
+  const [newProjectName, setNewProjectName] = useState('');
+  const [newMediaPath, setNewMediaPath] = useState('');
+  const [newLang, setNewLang] = useState('en');
+  const [isCreating, setIsCreating] = useState(false);
+
+  const handleCreate = async () => {
+    if (!newProjectName.trim() || !newMediaPath.trim()) return;
+    setIsCreating(true);
+    try {
+      await api.createProject(newProjectName.trim(), newMediaPath.trim(), newLang);
+      await loadProjectsList();
+      await selectProject(newProjectName.trim());
+      setShowNewModal(false);
+      setNewProjectName('');
+      setNewMediaPath('');
+    } catch (err: any) {
+      alert(`Error al crear proyecto: ${err?.response?.data?.detail || err.message}`);
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  return (
+    <header className="border-b border-neutral-800 bg-neutral-900/90 backdrop-blur sticky top-0 z-50">
+      <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between gap-4">
+        {/* Left: Brand & Project Selector */}
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-sky-500/20 border border-sky-500/40 flex items-center justify-center text-sky-400">
+              <Sparkles className="w-4 h-4" />
+            </div>
+            <span className="font-bold text-base tracking-tight bg-gradient-to-r from-sky-400 to-indigo-400 bg-clip-text text-transparent">
+              Audio Dubbing Studio
+            </span>
+          </div>
+
+          <div className="h-6 w-px bg-neutral-800" />
+
+          {/* Project dropdown */}
+          <div className="flex items-center gap-2 bg-neutral-800/80 border border-neutral-700/60 rounded-lg px-2.5 py-1">
+            <Folder className="w-4 h-4 text-neutral-400" />
+            <select
+              value={currentProject || ''}
+              onChange={(e) => selectProject(e.target.value)}
+              className="bg-transparent text-sm font-medium text-neutral-200 outline-none cursor-pointer max-w-[200px] truncate"
+            >
+              {projectsList.map((p) => (
+                <option key={p} value={p} className="bg-neutral-900 text-neutral-200">
+                  {p}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <button
+            onClick={() => setShowNewModal(true)}
+            className="p-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white transition flex items-center gap-1 text-xs font-semibold px-2"
+            title="Crear nuevo proyecto"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Nuevo</span>
+          </button>
+        </div>
+
+        {/* Center: Tabs Navigation */}
+        <nav className="flex items-center gap-1 bg-neutral-950 p-1 rounded-xl border border-neutral-800">
+          <button
+            onClick={() => setActiveTab('script')}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition ${
+              activeTab === 'script'
+                ? 'bg-sky-500 text-white shadow-lg shadow-sky-500/20'
+                : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/60'
+            }`}
+          >
+            Paso 1: Guion y Tiempos
+          </button>
+          <button
+            onClick={() => setActiveTab('dubbing')}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition ${
+              activeTab === 'dubbing'
+                ? 'bg-sky-500 text-white shadow-lg shadow-sky-500/20'
+                : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/60'
+            }`}
+          >
+            Paso 2: Doblaje (TTS)
+          </button>
+          <button
+            onClick={() => setActiveTab('studio')}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition ${
+              activeTab === 'studio'
+                ? 'bg-sky-500 text-white shadow-lg shadow-sky-500/20'
+                : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/60'
+            }`}
+          >
+            Paso 3: Estudio de Mezcla
+          </button>
+        </nav>
+
+        {/* Right: Language & Pinokio Status */}
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-neutral-800/80 border border-neutral-700/60 text-neutral-300">
+            <span>{language === 'pt' ? '🇧🇷 Portugués' : '🇺🇸 Inglés'}</span>
+          </div>
+
+          <button
+            onClick={checkTTS}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition ${
+              isTTSConnected
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                : 'bg-rose-500/10 border-rose-500/30 text-rose-400 hover:bg-rose-500/20'
+            }`}
+            title={isTTSConnected ? `Pinokio TTS activo en ${ttsUrl}` : 'Pinokio no detectado en puerto 7860. Haz clic para reintentar.'}
+          >
+            <Radio className="w-3.5 h-3.5" />
+            <span>{isTTSConnected ? 'Pinokio OK' : 'Pinokio Off'}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* New Project Modal */}
+      {showNewModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <h3 className="text-base font-bold text-white">Crear Nuevo Proyecto</h3>
+            
+            <div className="space-y-3 text-sm">
+              <div>
+                <label className="block text-xs font-medium text-neutral-400 mb-1">Nombre del Proyecto</label>
+                <input
+                  type="text"
+                  placeholder="ej. tutorial_instalacion_plantillas"
+                  value={newProjectName}
+                  onChange={(e) => setNewProjectName(e.target.value)}
+                  className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-white outline-none focus:border-sky-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-neutral-400 mb-1">Ruta del Audio o Video Original (.wav / .mp4)</label>
+                <input
+                  type="text"
+                  placeholder="F:\Desarrollo\video.mp4"
+                  value={newMediaPath}
+                  onChange={(e) => setNewMediaPath(e.target.value)}
+                  className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-white outline-none focus:border-sky-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-neutral-400 mb-1">Idioma de Doblaje</label>
+                <select
+                  value={newLang}
+                  onChange={(e) => setNewLang(e.target.value)}
+                  className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-white outline-none focus:border-sky-500"
+                >
+                  <option value="en">Inglés (English)</option>
+                  <option value="pt">Portugués (Brasil)</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                onClick={() => setShowNewModal(false)}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-neutral-400 hover:text-white"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleCreate}
+                disabled={isCreating}
+                className="px-4 py-2 rounded-lg text-xs font-semibold bg-sky-500 hover:bg-sky-400 text-white transition disabled:opacity-50"
+              >
+                {isCreating ? 'Creando...' : 'Crear Proyecto'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </header>
+  );
+};

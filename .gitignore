@@ -57,3 +57,9 @@ metadata.json
 
 # Variables de entorno (Aunque definimos no usarlas, es la regla de oro de la seguridad)
 .env
+
+
+# ==========================================
+# Frontend Node Modules
+# ==========================================
+frontend/node_modules/
