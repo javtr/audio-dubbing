@@ -24,6 +24,9 @@ export function useWebAudio(originalUrl?: string, dubbedMixUrl?: string) {
 
     const origEl = new Audio();
     const dubEl = new Audio();
+    origEl.preload = 'auto';
+    dubEl.preload = 'auto';
+
     origAudioRef.current = origEl;
     dubAudioRef.current = dubEl;
 
@@ -32,13 +35,17 @@ export function useWebAudio(originalUrl?: string, dubbedMixUrl?: string) {
       const origGain = ctx.createGain();
       origSource.connect(origGain).connect(ctx.destination);
       origGainRef.current = origGain;
+    } catch (e) {
+      console.warn('Original MediaElementSource fallback', e);
+    }
 
+    try {
       const dubSource = ctx.createMediaElementSource(dubEl);
       const dubGain = ctx.createGain();
       dubSource.connect(dubGain).connect(ctx.destination);
       dubGainRef.current = dubGain;
-    } catch {
-      // Fallback direct connection
+    } catch (e) {
+      console.warn('Dubbed MediaElementSource fallback', e);
     }
 
     return () => {
@@ -52,31 +59,33 @@ export function useWebAudio(originalUrl?: string, dubbedMixUrl?: string) {
   useEffect(() => {
     if (origAudioRef.current && originalUrl) {
       origAudioRef.current.src = originalUrl;
+      origAudioRef.current.load();
     }
   }, [originalUrl]);
 
   useEffect(() => {
     if (dubAudioRef.current && dubbedMixUrl) {
       dubAudioRef.current.src = dubbedMixUrl;
+      dubAudioRef.current.load();
     }
   }, [dubbedMixUrl]);
 
-  // Volume & Mute updates
+  // Volume & Mute updates (Supports 0.0 to 2.0 via GainNode)
   useEffect(() => {
+    const targetVol = isMuteOrig ? 0 : volOrig;
     if (origGainRef.current) {
-      origGainRef.current.gain.value = isMuteOrig ? 0 : volOrig;
-    }
-    if (origAudioRef.current) {
-      origAudioRef.current.volume = isMuteOrig ? 0 : Math.min(1.0, volOrig);
+      origGainRef.current.gain.value = targetVol;
+    } else if (origAudioRef.current) {
+      origAudioRef.current.volume = Math.min(1.0, targetVol);
     }
   }, [volOrig, isMuteOrig]);
 
   useEffect(() => {
+    const targetVol = isMuteDub ? 0 : volDub;
     if (dubGainRef.current) {
-      dubGainRef.current.gain.value = isMuteDub ? 0 : volDub;
-    }
-    if (dubAudioRef.current) {
-      dubAudioRef.current.volume = isMuteDub ? 0 : Math.min(1.0, volDub);
+      dubGainRef.current.gain.value = targetVol;
+    } else if (dubAudioRef.current) {
+      dubAudioRef.current.volume = Math.min(1.0, targetVol);
     }
   }, [volDub, isMuteDub]);
 
@@ -99,18 +108,24 @@ export function useWebAudio(originalUrl?: string, dubbedMixUrl?: string) {
   }, [isPlaying]);
 
   const play = useCallback(() => {
-    if (audioCtxRef.current?.state === 'suspended') {
+    if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
       audioCtxRef.current.resume();
     }
-    if (origAudioRef.current) {
-      origAudioRef.current.play().catch(() => {});
+
+    const curSec = currentTimeMs / 1000;
+
+    if (origAudioRef.current && origAudioRef.current.src) {
+      origAudioRef.current.currentTime = curSec;
+      origAudioRef.current.play().catch((e) => console.warn('Orig audio play error:', e));
     }
+
     if (dubAudioRef.current && dubAudioRef.current.src) {
-      dubAudioRef.current.currentTime = origAudioRef.current ? origAudioRef.current.currentTime : 0;
-      dubAudioRef.current.play().catch(() => {});
+      dubAudioRef.current.currentTime = curSec;
+      dubAudioRef.current.play().catch((e) => console.warn('Dub audio play error:', e));
     }
+
     setIsPlaying(true);
-  }, []);
+  }, [currentTimeMs]);
 
   const pause = useCallback(() => {
     origAudioRef.current?.pause();
@@ -151,4 +166,3 @@ export function useWebAudio(originalUrl?: string, dubbedMixUrl?: string) {
     setIsMuteDub,
   };
 }
-

@@ -46,10 +46,12 @@ export const StudioTab: React.FC = () => {
   const [outputPath, setOutputPath] = useState('');
   const [isExporting, setIsExporting] = useState(false);
 
-  // Audio URLs
+  // Audio URLs & Versioning for Cache-busting
+  const [dubbedAudioVersion, setDubbedAudioVersion] = useState(Date.now());
   const originalAudioUrl = currentProject ? `/api/audio/${currentProject}/original` : undefined;
+  const dubbedAudioUrl = currentProject ? `/api/audio/${currentProject}/dubbed?v=${dubbedAudioVersion}` : undefined;
 
-  // Web Audio Hook
+  // Web Audio Hook (Dual Multitrack Playback)
   const {
     isPlaying,
     currentTimeMs,
@@ -65,7 +67,7 @@ export const StudioTab: React.FC = () => {
     setIsMuteOrig,
     isMuteDub,
     setIsMuteDub,
-  } = useWebAudio(originalAudioUrl);
+  } = useWebAudio(originalAudioUrl, dubbedAudioUrl);
 
   // Fetch all waveforms (both tracks) and silences
   const loadWaveforms = useCallback(async () => {
@@ -75,6 +77,7 @@ export const StudioTab: React.FC = () => {
       setOrigPeaks(data.orig_peaks || []);
       setDubPeaks(data.dub_peaks || []);
       setSilences(data.silences || []);
+      setDubbedAudioVersion(Date.now());
     } catch (err) {
       console.error('Error fetching all waveforms', err);
     }

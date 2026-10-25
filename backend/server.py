@@ -595,6 +595,36 @@ def stream_segment_audio(project: str, filename: str):
     return FileResponse(seg_path, media_type="audio/wav")
 
 
+@app.get("/api/audio/{project}/dubbed")
+def stream_dubbed_audio(project: str, force: bool = False):
+    paths = pm.get_project_paths(project)
+    metadata = pm.load_project_metadata(project)
+    audio_path = paths.get("audio_file")
+    audios_dir = paths.get("audios_dir")
+    mix_dir = os.path.join(paths["root"], "mix")
+    os.makedirs(mix_dir, exist_ok=True)
+    mix_file = os.path.join(mix_dir, "dubbed_mix.mp3")
+
+    metadata_file = paths.get("metadata_file")
+    rebuild = force or not os.path.exists(mix_file)
+    if not rebuild and metadata_file and os.path.exists(metadata_file):
+        if os.path.getmtime(metadata_file) > os.path.getmtime(mix_file):
+            rebuild = True
+
+    if rebuild:
+        processor = AudioProcessor(audio_path, audios_dir, metadata)
+        mix = processor.mix_dubbed_audio()
+        if mix:
+            mix.export(mix_file, format="mp3", bitrate="192k")
+        else:
+            raise HTTPException(status_code=404, detail="No se pudo generar la mezcla doblada.")
+
+    if not os.path.exists(mix_file):
+        raise HTTPException(status_code=404, detail="Mezcla doblada no disponible.")
+
+    return FileResponse(mix_file, media_type="audio/mpeg")
+
+
 @app.get("/api/waveform/{project}/all")
 def get_all_waveforms(project: str, points: int = 1600):
     paths = pm.get_project_paths(project)
