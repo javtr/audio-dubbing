@@ -197,22 +197,37 @@ class SegmentCard(ctk.CTkFrame):
             self.data['tone'] = self.opt_tone.get()
             self.save_callback(self.data)
             self.update_density_metrics()
-            default_clr = "#e53935" if self.anomalies else "#3d3d3d"
-            self.after(1000, lambda: self.configure(border_color=default_clr))
+            self.configure(border_color="#38bdf8", border_width=2)
+            self.after(1000, self.update_status)
         except ValueError:
             messagebox.showwarning("Atención", "Los tiempos deben ser números enteros en milisegundos.")
 
-    def update_status(self):
+    def is_generated(self):
+        """Comprueba si el audio de este segmento ya existe físicamente en disco y es válido."""
+        if not self.audios_dir:
+            return False
         filename = self.data.get('filename', '')
+        if not filename:
+            return False
         path = os.path.join(self.audios_dir, filename)
-        if os.path.exists(path):
+        return os.path.isfile(path) and os.path.getsize(path) > 0
+
+    def update_status(self):
+        """Actualiza la apariencia y el estado del botón según la existencia del audio generado."""
+        has_audio = self.is_generated()
+        if has_audio:
             self.btn_play_gen.configure(state="normal", fg_color="#2e7d32")
+            border_clr = "#e53935" if self.anomalies else "#28a745"
+            border_w = 2
+            self.configure(fg_color="#1b2e1b", border_color=border_clr, border_width=border_w)
         else:
             self.btn_play_gen.configure(state="disabled", fg_color="#455a64")
+            border_clr = "#e53935" if self.anomalies else "#3d3d3d"
+            border_w = 2 if self.anomalies else 1
+            self.configure(fg_color="#2b2b2b", border_color=border_clr, border_width=border_w)
 
     def set_processing(self):
-        self.configure(border_color="#ffc107")
+        self.configure(border_color="#ffc107", border_width=2)
 
     def set_done(self):
-        self.configure(border_color="#28a745", fg_color="#1b2e1b")
         self.update_status()

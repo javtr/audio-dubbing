@@ -4,6 +4,7 @@ from tkinter import messagebox
 import customtkinter as ctk
 import pygame
 from ui.widgets.segment_card import SegmentCard
+from ui.dialogs.dubbing_prompt_dialog import DubbingPromptDialog
 from core.timing_validator import TimingValidator
 
 class TabDubbingView(ctk.CTkFrame):
@@ -104,6 +105,8 @@ class TabDubbingView(ctk.CTkFrame):
             card.pack(fill="x", padx=5, pady=5)
             self.card_widgets[seg['id']] = card
 
+        self._update_progress_summary()
+
     def _on_segment_saved(self, updated_seg):
         for i, s in enumerate(self.app.segments_data):
             if s['id'] == updated_seg['id']:
@@ -120,6 +123,28 @@ class TabDubbingView(ctk.CTkFrame):
             self.app.pm.save_project_metadata(self.app.current_project, self.app.segments_data)
             self.refresh()
             self.app.notify_metadata_updated()
+
+    def _update_progress_summary(self):
+        segments = self.app.segments_data or []
+        if not segments:
+            self.lbl_t2_progress.configure(text="", text_color="#aaaaaa")
+            return
+        audios_dir = self.app.project_paths.get("audios_dir") if self.app.project_paths else None
+        gen_count = 0
+        if audios_dir and os.path.exists(audios_dir):
+            for s in segments:
+                fn = s.get('filename', '')
+                fp = os.path.join(audios_dir, fn)
+                if os.path.isfile(fp) and os.path.getsize(fp) > 0:
+                    gen_count += 1
+        total = len(segments)
+        pct = (gen_count / total * 100.0) if total > 0 else 0
+        if gen_count == total:
+            self.lbl_t2_progress.configure(text=f"📊 {gen_count} de {total} generados (100% completado)", text_color="#81c784")
+        elif gen_count > 0:
+            self.lbl_t2_progress.configure(text=f"📊 {gen_count} de {total} generados ({pct:.0f}%)", text_color="#ffb74d")
+        else:
+            self.lbl_t2_progress.configure(text=f"📊 0 de {total} generados (0%)", text_color="#aaaaaa")
 
     def _start_single_dubbing(self, seg):
         if not self.app.pinokio.check_connection():
@@ -138,10 +163,13 @@ class TabDubbingView(ctk.CTkFrame):
                 self._generate_segment_voice(seg)
                 self.app.run_on_ui_thread(lambda: card.set_done() if card else None)
                 self.app.run_on_ui_thread(lambda: self.app.notify_audio_updated())
+                self.app.run_on_ui_thread(self._update_progress_summary)
             except Exception as e:
                 self.app.run_on_ui_thread(
                     lambda: messagebox.showerror("Error en Doblaje", f"Fallo al generar {seg['id']}: {e}")
                 )
+                if card:
+                    self.app.run_on_ui_thread(card.update_status)
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -163,16 +191,62 @@ class TabDubbingView(ctk.CTkFrame):
             messagebox.showwarning("Atención", "No hay segmentos para doblar.")
             return
 
+        audios_dir = self.app.project_paths.get("audios_dir") if self.app.project_paths else None
+
+        # Clasificar existentes vs faltantes
+        existing_segs = []
+        missing_segs = []
+        for seg in segments:
+            fname = seg.get('filename', '')
+            fpath = os.path.join(audios_dir, fname) if audios_dir and fname else None
+            if fpath and os.path.isfile(fpath) and os.path.getsize(fpath) > 0:
+                existing_segs.append(seg)
+            else:
+                missing_segs.append(seg)
+
+        mode = "all"
+        if len(existing_segs) == 0:
+            target_segments = segments
+            mode = "all"
+        elif len(missing_segs) == 0:
+            # Todos los segmentos ya están generados
+            resp = messagebox.askyesno(
+                "Segmentos Ya Generados",
+                f"Todos los {len(segments)} segmentos ya tienen audio generado.\n\n"
+                "¿Deseas reemplazarlos todos y regenerarlos desde cero?"
+            )
+            if not resp:
+                return
+            target_segments = segments
+            mode = "all"
+        else:
+            # Diálogo modal: faltantes vs reemplazar
+            dialog = DubbingPromptDialog(
+                self.winfo_toplevel(),
+                existing_count=len(existing_segs),
+                missing_count=len(missing_segs),
+                total_count=len(segments)
+            )
+            choice = dialog.show()
+            if choice == "missing":
+                target_segments = missing_segs
+                mode = "missing"
+            elif choice == "all":
+                target_segments = segments
+                mode = "all"
+            else:
+                return
+
         self.stop_requested.clear()
         self.btn_run_all.configure(state="disabled", text="Procesando...")
         self.btn_stop_dubbing.configure(state="normal", text="🛑 Detener")
 
         def _worker():
-            total = len(segments)
+            total = len(target_segments)
             was_stopped = False
             generated_count = 0
 
-            for i, seg in enumerate(segments):
+            for i, seg in enumerate(target_segments):
                 if self.stop_requested.is_set():
                     was_stopped = True
                     break
@@ -180,8 +254,13 @@ class TabDubbingView(ctk.CTkFrame):
                 card = self.card_widgets.get(seg['id'])
                 if card:
                     self.app.run_on_ui_thread(card.set_processing)
+                
+                label_prefix = "Generando faltante" if mode == "missing" else "Generando"
                 self.app.run_on_ui_thread(
-                    lambda idx=i+1: self.lbl_t2_progress.configure(text=f"Generando {idx} de {total}...")
+                    lambda idx=i+1, sid=seg.get('id', ''): self.lbl_t2_progress.configure(
+                        text=f"{label_prefix} {idx} de {total} (ID: {sid})...",
+                        text_color="#38bdf8"
+                    )
                 )
                 try:
                     self._generate_segment_voice(seg)
@@ -193,7 +272,7 @@ class TabDubbingView(ctk.CTkFrame):
                     if card:
                         self.app.run_on_ui_thread(card.update_status)
 
-            self.app.run_on_ui_thread(lambda: self._on_dubbing_all_finished(was_stopped, generated_count, total))
+            self.app.run_on_ui_thread(lambda: self._on_dubbing_all_finished(was_stopped, generated_count, total, mode))
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -225,13 +304,48 @@ class TabDubbingView(ctk.CTkFrame):
             model_size="1.7B"
         )
 
-    def _on_dubbing_all_finished(self, was_stopped=False, count=0, total=0):
+    def _on_dubbing_all_finished(self, was_stopped=False, count=0, total=0, mode="all"):
         self.btn_run_all.configure(state="normal", text="🚀 Solicitar Todos a Pinokio")
         self.btn_stop_dubbing.configure(state="disabled", text="🛑 Detener")
         self.app.notify_audio_updated()
+        self._update_progress_summary()
+
+        segments = self.app.segments_data or []
+        audios_dir = self.app.project_paths.get("audios_dir") if self.app.project_paths else None
+        total_project = len(segments)
+        actual_gen = 0
+        if audios_dir and os.path.exists(audios_dir):
+            for s in segments:
+                fn = s.get('filename', '')
+                fp = os.path.join(audios_dir, fn)
+                if os.path.isfile(fp) and os.path.getsize(fp) > 0:
+                    actual_gen += 1
+
         if was_stopped:
-            self.lbl_t2_progress.configure(text=f"Generación detenida en {count} de {total}.", text_color="#ffb74d")
-            messagebox.showinfo("Proceso Detenido", f"Se detuvo la solicitud a Pinokio.\nSe completaron {count} de {total} segmentos.")
+            self.lbl_t2_progress.configure(
+                text=f"Generación detenida ({count}/{total} de la tanda). Total: {actual_gen}/{total_project}.",
+                text_color="#ffb74d"
+            )
+            messagebox.showinfo(
+                "Proceso Detenido",
+                f"Se detuvo la solicitud a Pinokio.\nSe completaron {count} de {total} segmentos de esta tanda."
+            )
         else:
-            self.lbl_t2_progress.configure(text="¡Todos los segmentos generados!", text_color="#28a745")
-            messagebox.showinfo("Completado", "Se han generado todos los audios en la carpeta 'audios' del proyecto.")
+            if mode == "missing":
+                self.lbl_t2_progress.configure(
+                    text=f"¡Faltantes completados! ({actual_gen}/{total_project} generados)",
+                    text_color="#28a745"
+                )
+                messagebox.showinfo(
+                    "Completado",
+                    f"Se completó con éxito la generación de los {count} segmentos faltantes."
+                )
+            else:
+                self.lbl_t2_progress.configure(
+                    text=f"¡Todos los segmentos generados! ({actual_gen}/{total_project})",
+                    text_color="#28a745"
+                )
+                messagebox.showinfo(
+                    "Completado",
+                    "Se han generado todos los audios en la carpeta 'audios' del proyecto."
+                )
