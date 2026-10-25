@@ -1,3 +1,5 @@
+import sys
+sys.setrecursionlimit(5000)
 import os
 import copy
 import queue
@@ -25,6 +27,18 @@ def _safe_img_del(self):
         except Exception:
             pass
 tk.Image.__del__ = _safe_img_del
+
+# Parche de seguridad para CustomTkinter: evitar que bucles reentrantes de eventos <Configure> disparen RecursionError
+_orig_update_dimensions = ctk.windows.widgets.core_widget_classes.CTkBaseClass._update_dimensions_event
+def _safe_update_dimensions_event(self, event):
+    if getattr(self, '_updating_dimensions_guard', False):
+        return
+    self._updating_dimensions_guard = True
+    try:
+        _orig_update_dimensions(self, event)
+    finally:
+        self._updating_dimensions_guard = False
+ctk.windows.widgets.core_widget_classes.CTkBaseClass._update_dimensions_event = _safe_update_dimensions_event
 
 try:
     import pygame

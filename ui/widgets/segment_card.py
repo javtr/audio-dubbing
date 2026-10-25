@@ -96,10 +96,10 @@ class SegmentCard(ctk.CTkFrame):
         self.opt_tone.pack(side="left", padx=5)
 
         # Eventos para cálculo de densidad en tiempo real
-        self.txt_original.bind("<KeyRelease>", lambda e: self.update_density_metrics())
-        self.txt_translated.bind("<KeyRelease>", lambda e: self.update_density_metrics())
-        self.ent_start.bind("<KeyRelease>", lambda e: self.update_density_metrics())
-        self.ent_end.bind("<KeyRelease>", lambda e: self.update_density_metrics())
+        self.txt_original.bind("<KeyRelease>", lambda *args: self.update_density_metrics())
+        self.txt_translated.bind("<KeyRelease>", lambda *args: self.update_density_metrics())
+        self.ent_start.bind("<KeyRelease>", lambda *args: self.update_density_metrics())
+        self.ent_end.bind("<KeyRelease>", lambda *args: self.update_density_metrics())
 
         # Botones de acción
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")

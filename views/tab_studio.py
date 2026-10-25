@@ -322,7 +322,6 @@ class TabStudioView(ctk.CTkFrame):
             self.app.processor.mark_mix_dirty()
             self.app.processor.recalculate_end_times()
             self.app.pm.save_project_metadata(self.app.current_project, self.app.processor.metadata)
-        self.refresh()
         self.app.notify_metadata_updated()
 
     def _delete_selected_segment(self):
@@ -748,14 +747,18 @@ class TabStudioView(ctk.CTkFrame):
             def _finish_ui():
                 self.btn_auto_split_all.configure(state="normal", text="⚡ Auto-dividir Todos")
                 self.btn_auto_split_all_bottom.configure(state="normal", text="⚡ Auto-dividir Todos")
+                self.lbl_dub_hover.configure(
+                    text=f"⚡ Auto-división completada: {completed_count} segmentos procesados.",
+                    text_color="#22c55e"
+                )
                 # Guardado de metadata y refresco único consolidado (rápido y fluido)
                 self._on_metadata_modified()
-                messagebox.showinfo(
+                self.after(150, lambda: messagebox.showinfo(
                     "Auto-División Masiva Completada",
                     f"¡Se auto-dividieron {completed_count} de {n} segmentos exitosamente!\n\n"
                     "Todos los audios fueron cortados acústicamente y sincronizados a velocidad 1.00x "
                     "con el silencio muerto repartido equitativamente (50% en medio y 50% al final)."
-                )
+                ))
 
             self.app.run_on_ui_thread(_finish_ui)
 
@@ -817,7 +820,6 @@ class TabStudioView(ctk.CTkFrame):
 
             self.app.processor.recalculate_end_times()
             self.app.pm.save_project_metadata(self.app.current_project, self.app.processor.metadata)
-            self.refresh()
             self.app.notify_metadata_updated()
             messagebox.showinfo("Éxito", "Tiempos actualizados y proyecto recalculado.")
         except ValueError:
@@ -848,7 +850,6 @@ class TabStudioView(ctk.CTkFrame):
         self.timeline_ctrl.selected_segment_id = None
         self._update_delete_button_state()
         self.app.pm.save_project_metadata(self.app.current_project, restored)
-        self.refresh()
         self.app.notify_metadata_updated()
         messagebox.showinfo("Reseteado", "Todos los segmentos han sido restaurados a sus posiciones originales.")
 
