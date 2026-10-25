@@ -112,6 +112,13 @@ class TabStudioView(ctk.CTkFrame):
         )
         self.btn_delete_seg.pack(side="left", padx=2)
 
+        self.btn_auto_split_top = ctk.CTkButton(
+            dub_header, text="🧩 Auto-dividir", width=115, height=24,
+            fg_color="#2b2b2b", hover_color="#0284c7", state="disabled",
+            command=self._auto_split_selected_segment
+        )
+        self.btn_auto_split_top.pack(side="left", padx=2)
+
         self.btn_reset_dub = ctk.CTkButton(
             dub_header, text="↺ Resetear a Original", width=145, height=24,
             fg_color="#a83232", hover_color="#822727",
@@ -209,6 +216,13 @@ class TabStudioView(ctk.CTkFrame):
         btn_reload_studio = ctk.CTkButton(bot_frame, text="🔄 Recargar Mezcla", width=120, command=self.refresh)
         btn_reload_studio.pack(side="left", padx=5)
 
+        self.btn_auto_split_bottom = ctk.CTkButton(
+            bot_frame, text="🧩 Auto-dividir Silencio", font=("Arial", 13, "bold"),
+            fg_color="#2b2b2b", hover_color="#0284c7", state="disabled",
+            command=self._auto_split_selected_segment
+        )
+        self.btn_auto_split_bottom.pack(side="left", padx=5)
+
         # Exportar
         self.btn_export_video = ctk.CTkButton(
             bot_frame, text="🎬 Exportar Video Doblado", fg_color="#6f42c1", hover_color="#59359a",
@@ -292,11 +306,171 @@ class TabStudioView(ctk.CTkFrame):
     def _delete_selected_segment(self):
         self.timeline_ctrl.delete_selected_segment()
 
+    def _can_auto_split(self, seg_id):
+        if not seg_id or not self.app.processor or not self.app.processor.metadata:
+            return False
+        for sil in self.timeline_ctrl.silences:
+            if sil[2] == seg_id and sil[3] >= 4.0:
+                return True
+        return False
+
     def _update_delete_button_state(self):
-        if self.timeline_ctrl.selected_segment_id:
+        seg_id = self.timeline_ctrl.selected_segment_id
+        if seg_id:
             self.btn_delete_seg.configure(state="normal", fg_color="#c62828")
         else:
             self.btn_delete_seg.configure(state="disabled", fg_color="#2b2b2b")
+
+        can_split = self._can_auto_split(seg_id)
+        if can_split:
+            self.btn_auto_split_top.configure(state="normal", fg_color="#0284c7")
+            self.btn_auto_split_bottom.configure(state="normal", fg_color="#0284c7")
+        else:
+            self.btn_auto_split_top.configure(state="disabled", fg_color="#2b2b2b")
+            self.btn_auto_split_bottom.configure(state="disabled", fg_color="#2b2b2b")
+
+    def _find_best_split_point(self, text):
+        if not text or len(text) < 10:
+            return None
+        # 1. Puntuación sintáctica: comas, punto y coma, dos puntos
+        delimiters = [",", ";", ":"]
+        candidates = [i for i, ch in enumerate(text) if ch in delimiters and 4 < i < (len(text) - 4)]
+        if candidates:
+            mid = len(text) / 2.0
+            best_idx = min(candidates, key=lambda i: abs(i - mid))
+            return best_idx + 1
+
+        # 2. Conjunciones comunes de transición
+        conjunctions = [" and ", " but ", " so ", " because ", " which ", " while ", " although ", " that "]
+        found = []
+        lower = text.lower()
+        for c in conjunctions:
+            pos = 0
+            while True:
+                idx = lower.find(c, pos)
+                if idx == -1:
+                    break
+                if 4 < idx < (len(text) - 4):
+                    found.append(idx + 1)
+                pos = idx + len(c)
+        if found:
+            mid = len(text) / 2.0
+            return min(found, key=lambda i: abs(i - mid))
+
+        return None
+
+    def _auto_split_selected_segment(self):
+        seg_id = self.timeline_ctrl.selected_segment_id
+        if not seg_id or not self.app.processor or not self.app.processor.metadata:
+            return
+
+        seg = next((s for s in self.app.processor.metadata if s.get('id') == seg_id), None)
+        if not seg:
+            return
+
+        text_en = seg.get('translated', '').strip()
+        text_es = seg.get('original', '').strip()
+
+        # 1. Buscar corte sintáctico en inglés
+        split_idx_en = self._find_best_split_point(text_en)
+        if split_idx_en is None:
+            messagebox.showinfo(
+                "No se puede auto-dividir",
+                "El texto en inglés de este segmento no contiene comas ni conjunciones naturales para dividirlo de forma segura."
+            )
+            return
+
+        part1_en = text_en[:split_idx_en].strip()
+        part2_en = text_en[split_idx_en:].lstrip(",:; ").strip()
+
+        # En español intentamos dividir por puntuación o por mitad de palabras
+        split_idx_es = self._find_best_split_point(text_es)
+        if split_idx_es is not None:
+            part1_es = text_es[:split_idx_es].strip()
+            part2_es = text_es[split_idx_es:].lstrip(",:; ").strip()
+        else:
+            words_es = text_es.split()
+            half_w = max(1, len(words_es) // 2)
+            part1_es = " ".join(words_es[:half_w])
+            part2_es = " ".join(words_es[half_w:])
+
+        # 2. Calcular silencio muerto y repartir equitativamente (50% en medio y 50% al final)
+        start_ms = seg.get('start_ms', 0)
+        end_ms = seg.get('end_ms', 0)
+        total_span = end_ms - start_ms
+
+        audios_dir = self.app.project_paths.get("audios_dir") if self.app.project_paths else None
+        fname = seg.get('filename', '')
+        fpath = os.path.join(audios_dir, fname) if audios_dir and fname else None
+        voice_dur = 0
+        if fpath and os.path.isfile(fpath):
+            try:
+                voice_dur = len(AudioSegment.from_file(fpath))
+            except Exception:
+                voice_dur = 0
+
+        if voice_dur <= 0 or voice_dur >= total_span:
+            for sil in self.timeline_ctrl.silences:
+                if sil[2] == seg_id:
+                    voice_dur = int(total_span - (sil[3] * 1000))
+                    break
+        if voice_dur <= 0 or voice_dur >= total_span:
+            voice_dur = total_span // 2
+
+        dead_air = max(0, total_span - voice_dur)
+        # Reparto equitativo: 50% de pausa intermedia y 50% de pausa final
+        pause_mid = dead_air // 2
+        pause_end = dead_air - pause_mid
+
+        words_p1 = max(1, len(part1_en.split()))
+        words_p2 = max(1, len(part2_en.split()))
+        ratio_p1 = words_p1 / (words_p1 + words_p2)
+
+        dur_voice_p1 = int(voice_dur * ratio_p1)
+        dur_voice_p2 = voice_dur - dur_voice_p1
+
+        # Tiempos resultantes
+        start_1 = start_ms
+        end_1 = start_1 + dur_voice_p1
+
+        start_2 = end_1 + pause_mid
+        end_2 = end_ms # start_2 + dur_voice_p2 + pause_end == end_ms
+
+        # 3. Crear los dos sub-segmentos en los metadatos
+        idx = self.app.processor.metadata.index(seg)
+        seg1 = copy.deepcopy(seg)
+        seg1['translated'] = part1_en
+        seg1['original'] = part1_es
+        seg1['end_ms'] = end_1
+
+        all_ids = [str(s.get('id')) for s in self.app.processor.metadata]
+        new_id = f"{seg_id}.1"
+        c = 1
+        while new_id in all_ids:
+            c += 1
+            new_id = f"{seg_id}.{c}"
+
+        seg2 = copy.deepcopy(seg)
+        seg2['id'] = new_id
+        seg2['filename'] = f"seg_{new_id}.wav"
+        seg2['translated'] = part2_en
+        seg2['original'] = part2_es
+        seg2['start_ms'] = start_2
+        seg2['end_ms'] = end_2
+
+        self.app.processor.metadata[idx] = seg1
+        self.app.processor.metadata.insert(idx + 1, seg2)
+
+        self._on_metadata_modified()
+        messagebox.showinfo(
+            "Auto-División Exitosa",
+            f"El segmento [{seg_id}] fue dividido en 2 frases por la coma central.\n\n"
+            f"• Frase 1: {start_1} ms a {end_1} ms\n"
+            f"• Pausa intermedia: {pause_mid / 1000.0:.1f}s\n"
+            f"• Frase 2: {start_2} ms a {end_2} ms (Silencio final: {pause_end / 1000.0:.1f}s)\n\n"
+            "El silencio muerto fue repartido equitativamente (50% en medio y 50% al final).\n"
+            "Ve a la pestaña de Doblaje para generar los nuevos audios correspondientes."
+        )
 
     def refresh(self):
         for w in self.mid_scroll.winfo_children():
@@ -432,7 +606,7 @@ class TabStudioView(ctk.CTkFrame):
 
             if voice_dur > 0:
                 voice_end = s_ms + voice_dur
-                if (e_ms - voice_end) > 250:
+                if (e_ms - voice_end) >= 4000: # Solo registrar y resaltar silencios >= 4.0s
                     dur_s = (e_ms - voice_end) / 1000.0
                     dub_silences.append((voice_end, e_ms, s.get("id", ""), dur_s))
 

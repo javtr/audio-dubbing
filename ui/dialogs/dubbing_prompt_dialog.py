@@ -107,3 +107,4 @@ class DubbingPromptDialog(ctk.CTkToplevel):
         """Bloquea hasta que el usuario elija una opción y retorna el resultado."""
         self.wait_window(self)
         return self.result
+

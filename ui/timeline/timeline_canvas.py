@@ -58,14 +58,41 @@ class TimelineCanvas:
 
         self.ax.set_xlim(self.view_start_ms, self.view_end_ms)
 
-        # 1. Zonas de Silencio Muerto (resaltado con rayas oblicuas rojas de advertencia)
+        # 1. Zonas de Silencio Muerto (Filtrado: solo >= 4s. Naranja: 4s a 10s, Magenta neón: > 10s)
         if silences and self.is_dubbed:
             for sil_item in silences:
                 sil_s = sil_item[0]
                 sil_e = sil_item[1]
-                if sil_e > sil_s:
-                    self.ax.axvspan(sil_s, sil_e, facecolor='#dc2626', alpha=0.32, hatch='///', edgecolor='#ef4444', linewidth=0.6, zorder=2)
-                    self.ax.axvline(x=sil_s, color='#ef4444', linestyle=':', linewidth=1.2, alpha=0.75, zorder=3)
+                dur_s = sil_item[3] if len(sil_item) > 3 else (sil_e - sil_s) / 1000.0
+                if sil_e > sil_s and dur_s >= 4.0:
+                    if dur_s > 10.0:
+                        # Silencio Crítico (> 10s): Magenta neón
+                        face_c = '#d946ef'
+                        alpha_v = 0.52
+                        edge_c = '#f43f5e'
+                        line_c = '#f43f5e'
+                        line_w = 1.8
+                        hatch_pat = '///'
+                    else:
+                        # Silencio Notorio (4s a 10s): Naranja intenso
+                        face_c = '#ea580c'
+                        alpha_v = 0.38
+                        edge_c = '#f97316'
+                        line_c = '#f97316'
+                        line_w = 1.3
+                        hatch_pat = '//'
+
+                    self.ax.axvspan(sil_s, sil_e, facecolor=face_c, alpha=alpha_v, hatch=hatch_pat, edgecolor=edge_c, linewidth=0.6, zorder=2)
+                    self.ax.axvline(x=sil_s, color=line_c, linestyle=':', linewidth=line_w, alpha=0.9, zorder=3)
+
+                    # Etiqueta de duración
+                    mid_x = (sil_s + sil_e) / 2.0
+                    self.ax.text(
+                        mid_x, 0.65, f"+{dur_s:.1f}s", color='white',
+                        fontsize=8, fontweight='bold', ha='center', va='center',
+                        bbox=dict(boxstyle="round,pad=0.2", fc=face_c, ec=edge_c, alpha=0.85),
+                        zorder=6
+                    )
 
         # 2. Marcas de cortes de cada frase
         self.segment_patches.clear()

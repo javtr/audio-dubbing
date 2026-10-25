@@ -183,16 +183,22 @@ class TimelineController:
                 elif (s_ms + tol) < event.xdata < (e_ms - tol):
                     cursor_type = "fleur"
 
-        # Comprobar si el cursor está sobre una zona de silencio muerto
+        # Comprobar si el cursor está sobre una zona de silencio muerto (solo >= 4s)
         silence_hit = None
+        silence_color = "#f97316"
         for (sil_s, sil_e, sil_id, sil_dur) in self.current_silences:
-            if sil_s <= event.xdata <= sil_e:
-                silence_hit = f"⚠️ [{sil_id}] Silencio muerto de {sil_dur:.1f}s sin voz (la voz terminó en {sil_s} ms, segmento dura hasta {sil_e} ms)"
+            if sil_s <= event.xdata <= sil_e and sil_dur >= 4.0:
+                if sil_dur > 10.0:
+                    silence_hit = f"🚨 [{sil_id}] Silencio Crítico (+{sil_dur:.1f}s) - Se recomienda expandir texto con Prompt de IA en Paso 2"
+                    silence_color = "#f43f5e"
+                else:
+                    silence_hit = f"⚠️ [{sil_id}] Silencio Notorio (+{sil_dur:.1f}s) - Pulsa 'Auto-dividir' para repartir el espacio"
+                    silence_color = "#f97316"
                 break
 
         self.dub_canvas_comp.set_cursor(cursor_type)
         if silence_hit:
-            self._emit_hover_dub(silence_hit, "#ff5252")
+            self._emit_hover_dub(silence_hit, silence_color)
         elif hovered_text:
             self._emit_hover_dub(hovered_text, "#ffb74d")
         else:

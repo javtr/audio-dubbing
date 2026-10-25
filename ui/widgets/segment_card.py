@@ -114,6 +114,14 @@ class SegmentCard(ctk.CTkFrame):
         self.btn_request = ctk.CTkButton(btn_frame, text="✨ Generar este", width=125, fg_color="#7b1fa2", hover_color="#4a148c", command=lambda: self.request_callback(self.data))
         self.btn_request.pack(side="left", padx=5)
 
+        self.btn_copy_prompt = ctk.CTkButton(
+            btn_frame, text="📋 Copiar Prompt IA", width=145,
+            font=("Arial", 11, "bold"), fg_color="#a21caf", hover_color="#86198f",
+            command=self._on_copy_prompt_clicked
+        )
+        self.btn_copy_prompt.pack(side="left", padx=5)
+        self.btn_copy_prompt.pack_forget() # Oculto por defecto
+
         self.btn_play_gen = ctk.CTkButton(btn_frame, text="🎧 Oír Doblado", width=125, fg_color="#607d8b", hover_color="#455a64", command=self._play_generated)
         self.btn_play_gen.pack(side="left", padx=5)
 
@@ -159,7 +167,17 @@ class SegmentCard(ctk.CTkFrame):
             clasif = "Muy largo"
             color = "#e57373"
 
-        self.lbl_density.configure(text=f"{trans_words} / {orig_words} ({pct:.0f}%) | {clasif}", text_color=color)
+        slot_dur, audio_dur, gap_s = self._get_silence_metrics()
+        silence_text = ""
+        if gap_s > 10.0:
+            silence_text = f" | 🚨 Silencio crítico: +{gap_s:.1f}s al final"
+            color = "#f43f5e"
+        elif gap_s >= 4.0:
+            silence_text = f" | ⚠️ Silencio largo: +{gap_s:.1f}s al final"
+            if color == "#81c784":
+                color = "#f97316"
+
+        self.lbl_density.configure(text=f"{trans_words} / {orig_words} ({pct:.0f}%) | {clasif}{silence_text}", text_color=color)
 
     def _play_slice(self):
         try:
@@ -202,6 +220,23 @@ class SegmentCard(ctk.CTkFrame):
         except ValueError:
             messagebox.showwarning("Atención", "Los tiempos deben ser números enteros en milisegundos.")
 
+    def _get_silence_metrics(self):
+        start_ms = self.data.get('start_ms', 0)
+        end_ms = self.data.get('end_ms', 0)
+        slot_dur = max(0.0, (end_ms - start_ms) / 1000.0)
+
+        filename = self.data.get('filename', '')
+        path = os.path.join(self.audios_dir, filename) if self.audios_dir and filename else None
+        audio_dur = 0.0
+        if path and os.path.isfile(path) and os.path.getsize(path) > 0:
+            try:
+                audio_dur = len(AudioSegment.from_file(path)) / 1000.0
+            except Exception:
+                audio_dur = 0.0
+
+        gap_s = max(0.0, slot_dur - audio_dur) if audio_dur > 0 else 0.0
+        return slot_dur, audio_dur, gap_s
+
     def is_generated(self):
         """Comprueba si el audio de este segmento ya existe físicamente en disco y es válido."""
         if not self.audios_dir:
@@ -213,7 +248,7 @@ class SegmentCard(ctk.CTkFrame):
         return os.path.isfile(path) and os.path.getsize(path) > 0
 
     def update_status(self):
-        """Actualiza la apariencia y el estado del botón según la existencia del audio generado."""
+        """Actualiza la apariencia, el botón de doblado y la visibilidad del botón de prompt de IA."""
         has_audio = self.is_generated()
         if has_audio:
             self.btn_play_gen.configure(state="normal", fg_color="#2e7d32")
@@ -225,6 +260,57 @@ class SegmentCard(ctk.CTkFrame):
             border_clr = "#e53935" if self.anomalies else "#3d3d3d"
             border_w = 2 if self.anomalies else 1
             self.configure(fg_color="#2b2b2b", border_color=border_clr, border_width=border_w)
+
+        # Gestionar botón de copiar prompt IA (Visible si silencio crítico > 10s o slot largo con poco texto)
+        slot_dur, audio_dur, gap_s = self._get_silence_metrics()
+        trans_text = self.txt_translated.get("1.0", "end-1c").strip()
+        trans_words = len(trans_text.split()) if trans_text else 0
+
+        show_prompt_btn = (audio_dur > 0 and gap_s > 10.0) or (slot_dur >= 10.0 and trans_words <= (slot_dur * 1.5))
+        if show_prompt_btn:
+            self.btn_copy_prompt.pack(side="left", padx=5, after=self.btn_request)
+        else:
+            self.btn_copy_prompt.pack_forget()
+
+        self.update_density_metrics()
+
+    def _on_copy_prompt_clicked(self):
+        slot_dur, audio_dur, gap_s = self._get_silence_metrics()
+        orig_text = self.txt_original.get("1.0", "end-1c").strip()
+        trans_text = self.txt_translated.get("1.0", "end-1c").strip()
+        orig_words = len(orig_text.split()) if orig_text else 0
+        trans_words = len(trans_text.split()) if trans_text else 0
+        target_words = max(int(slot_dur * 2.3), trans_words + 15)
+
+        prompt = f"""Actúa como un traductor y adaptador de guiones para doblaje audiovisual profesional.
+Necesito expandir la siguiente frase en inglés porque en la locución original el orador habla durante mucho más tiempo y la traducción actual deja un silencio incómodo de {gap_s:.1f} segundos.
+
+DATOS DEL SEGMENTO:
+- Duración total del espacio en video: {slot_dur:.1f} segundos.
+- Duración de la locución actual en inglés: {audio_dur:.1f} segundos.
+- Silencio muerto restante: {gap_s:.1f} segundos.
+- Palabras en español original: {orig_words} palabras.
+- Palabras actuales en inglés: {trans_words} palabras.
+- Palabras objetivo sugeridas en inglés: ~{target_words} palabras (~2.3 palabras/segundo).
+
+TEXTO ORIGINAL EN ESPAÑOL:
+"{orig_text}"
+
+TRADUCCIÓN ACTUAL (DEMASIADO CORTA):
+"{trans_text}"
+
+INSTRUCCIÓN:
+Reescribe y expande la traducción en inglés para que alcance aproximadamente {target_words} palabras, explicando la idea con mayor detalle, agregando contexto natural, conectores fluidos o aclaraciones que mantengan intacto el sentido del orador original. Responde ÚNICAMENTE con el texto en inglés resultante, sin explicaciones ni notas."""
+
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(prompt)
+            self.update() # Forzar actualización del portapapeles en Windows
+        except Exception:
+            pass
+
+        self.btn_copy_prompt.configure(text="✅ ¡Prompt Copiado!", fg_color="#28a745")
+        self.after(2500, lambda: self.btn_copy_prompt.configure(text="📋 Copiar Prompt IA", fg_color="#a21caf"))
 
     def set_processing(self):
         self.configure(border_color="#ffc107", border_width=2)
