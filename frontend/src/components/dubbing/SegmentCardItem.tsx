@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Segment, ReferenceItem } from '../../types';
 import { useProjectStore } from '../../stores/useProjectStore';
 import * as api from '../../api/client';
@@ -16,6 +16,7 @@ export const SegmentCardItem: React.FC<Props> = ({ segment, index }) => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isPlayingOrig, setIsPlayingOrig] = useState(false);
   const [isPlayingDub, setIsPlayingDub] = useState(false);
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const audioOrigUrl = currentProject ? `/api/audio/${currentProject}/original` : '';
   const audioDubUrl = currentProject && segment.clip_duration_ms && segment.clip_duration_ms > 0
@@ -48,12 +49,33 @@ export const SegmentCardItem: React.FC<Props> = ({ segment, index }) => {
     }
   };
 
-  const playAudio = (url: string, setPlaying: (val: boolean) => void) => {
-    const audio = new Audio(url);
+  const togglePlayAudio = (url: string, isPlaying: boolean, setPlaying: (val: boolean) => void) => {
+    if (isPlaying && currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current = null;
+      setPlaying(false);
+      return;
+    }
+
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+    }
+
+    const audio = new Audio(`${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`);
+    currentAudioRef.current = audio;
     setPlaying(true);
-    audio.onended = () => setPlaying(false);
-    audio.onerror = () => setPlaying(false);
-    audio.play().catch(() => setPlaying(false));
+    audio.onended = () => {
+      setPlaying(false);
+      currentAudioRef.current = null;
+    };
+    audio.onerror = () => {
+      setPlaying(false);
+      currentAudioRef.current = null;
+    };
+    audio.play().catch(() => {
+      setPlaying(false);
+      currentAudioRef.current = null;
+    });
   };
 
   return (
@@ -136,7 +158,7 @@ export const SegmentCardItem: React.FC<Props> = ({ segment, index }) => {
           <button
             onClick={() => {
               const refObj = references.find((r) => r.segmento === selectedRef);
-              if (refObj) playAudio(refObj.audio_url, () => {});
+              if (refObj) togglePlayAudio(refObj.audio_url, false, () => {});
             }}
             className="p-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-white"
             title="Escuchar audio de muestra de la voz"
@@ -149,7 +171,7 @@ export const SegmentCardItem: React.FC<Props> = ({ segment, index }) => {
           {/* Play Dubbed Audio */}
           {audioDubUrl && (
             <button
-              onClick={() => playAudio(audioDubUrl, setIsPlayingDub)}
+              onClick={() => togglePlayAudio(audioDubUrl, isPlayingDub, setIsPlayingDub)}
               className="px-2.5 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-emerald-400 font-semibold flex items-center gap-1 transition"
             >
               {isPlayingDub ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}

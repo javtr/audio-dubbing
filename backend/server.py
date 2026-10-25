@@ -444,6 +444,18 @@ def generate_single_tts(req: GenerateSingleTTSRequest):
     target_span = target_seg.get("end_ms", 0) - target_seg.get("start_ms", 0)
     speed_ratio = round(clip_dur / float(target_span), 2) if target_span > 0 else 1.0
 
+    target_seg["clip_duration_ms"] = clip_dur
+    target_seg["current_speed_ratio"] = speed_ratio
+    pm.save_project_metadata(req.project, metadata)
+
+    # Invalidate old dubbed mix file
+    mix_file = os.path.join(paths["root"], "mix", "dubbed_mix.mp3")
+    if os.path.exists(mix_file):
+        try:
+            os.remove(mix_file)
+        except Exception:
+            pass
+
     return {
         "status": "ok",
         "segment_id": req.segment_id,
@@ -521,6 +533,17 @@ def generate_batch_tts(req: GenerateBatchTTSRequest):
                 target_span = target_seg.get("end_ms", 0) - target_seg.get("start_ms", 0)
                 speed_ratio = round(clip_dur / float(target_span), 2) if target_span > 0 else 1.0
 
+                target_seg["clip_duration_ms"] = clip_dur
+                target_seg["current_speed_ratio"] = speed_ratio
+
+                # Remove old mix file so next playback will build fresh
+                mix_file = os.path.join(paths["root"], "mix", "dubbed_mix.mp3")
+                if os.path.exists(mix_file):
+                    try:
+                        os.remove(mix_file)
+                    except Exception:
+                        pass
+
                 ws_manager.broadcast_sync({
                     "type": "tts_segment_done",
                     "segment_id": seg_id,
@@ -534,6 +557,8 @@ def generate_batch_tts(req: GenerateBatchTTSRequest):
                     "error": str(e)
                 })
 
+        # Save all updated clip durations to project metadata
+        pm.save_project_metadata(req.project, metadata)
         ws_manager.broadcast_sync({"type": "tts_batch_complete"})
 
     threading.Thread(target=_worker, daemon=True).start()
@@ -592,7 +617,11 @@ def stream_segment_audio(project: str, filename: str):
     seg_path = os.path.join(paths["audios_dir"], filename)
     if not os.path.exists(seg_path):
         raise HTTPException(status_code=404, detail="Audio del segmento no generado.")
-    return FileResponse(seg_path, media_type="audio/wav")
+    return FileResponse(
+        seg_path,
+        media_type="audio/wav",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
+    )
 
 
 @app.get("/api/audio/{project}/dubbed")
@@ -607,13 +636,20 @@ def stream_dubbed_audio(project: str, force: bool = False):
 
     metadata_file = paths.get("metadata_file")
     rebuild = force or not os.path.exists(mix_file)
-    if not rebuild and metadata_file and os.path.exists(metadata_file):
-        if os.path.getmtime(metadata_file) > os.path.getmtime(mix_file):
+    if not rebuild and os.path.exists(mix_file):
+        mix_mtime = os.path.getmtime(mix_file)
+        if metadata_file and os.path.exists(metadata_file) and os.path.getmtime(metadata_file) > mix_mtime:
             rebuild = True
+        elif audios_dir and os.path.exists(audios_dir):
+            for f in os.listdir(audios_dir):
+                if f.endswith(".wav"):
+                    if os.path.getmtime(os.path.join(audios_dir, f)) > mix_mtime:
+                        rebuild = True
+                        break
 
     if rebuild:
         processor = AudioProcessor(audio_path, audios_dir, metadata)
-        mix = processor.mix_dubbed_audio()
+        mix = processor.mix_dubbed_audio(force=True)
         if mix:
             mix.export(mix_file, format="mp3", bitrate="192k")
         else:
@@ -622,7 +658,15 @@ def stream_dubbed_audio(project: str, force: bool = False):
     if not os.path.exists(mix_file):
         raise HTTPException(status_code=404, detail="Mezcla doblada no disponible.")
 
-    return FileResponse(mix_file, media_type="audio/mpeg")
+    return FileResponse(
+        mix_file,
+        media_type="audio/mpeg",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        }
+    )
 
 
 @app.get("/api/waveform/{project}/all")
@@ -647,11 +691,23 @@ def get_all_waveforms(project: str, points: int = 1600):
     processor = AudioProcessor(audio_path, audios_dir, metadata)
     dub_peaks = []
     try:
-        dub_mix = processor.mix_dubbed_audio()
+        dub_mix = processor.mix_dubbed_audio(force=True)
         if dub_mix:
             if total_dur_ms == 0:
                 total_dur_ms = len(dub_mix)
             dub_peaks = compute_min_max_waveform(dub_mix, num_bins=points)
+
+            # Keep dubbed_mix.mp3 synchronized
+            mix_dir = os.path.join(paths["root"], "mix")
+            os.makedirs(mix_dir, exist_ok=True)
+            mix_file = os.path.join(mix_dir, "dubbed_mix.mp3")
+            need_export = not os.path.exists(mix_file)
+            if not need_export and audios_dir and os.path.exists(audios_dir):
+                mix_mtime = os.path.getmtime(mix_file)
+                if any(os.path.getmtime(os.path.join(audios_dir, f)) > mix_mtime for f in os.listdir(audios_dir) if f.endswith(".wav")):
+                    need_export = True
+            if need_export:
+                dub_mix.export(mix_file, format="mp3", bitrate="192k")
     except Exception as e:
         print("Error mixing dubbed audio for waveform:", e)
 

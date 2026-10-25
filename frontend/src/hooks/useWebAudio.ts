@@ -17,41 +17,59 @@ export function useWebAudio(originalUrl?: string, dubbedMixUrl?: string) {
   const [isMuteOrig, setIsMuteOrig] = useState(false);
   const [isMuteDub, setIsMuteDub] = useState(false);
 
-  // Initialize Audio Elements & AudioContext
+  // Initialize Audio Elements & Web Audio Nodes
   useEffect(() => {
-    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-    audioCtxRef.current = ctx;
+    let ctx: AudioContext | null = null;
+    try {
+      ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      audioCtxRef.current = ctx;
+    } catch (e) {
+      console.warn('Web Audio Context not supported', e);
+    }
 
     const origEl = new Audio();
     const dubEl = new Audio();
     origEl.preload = 'auto';
     dubEl.preload = 'auto';
+    origEl.crossOrigin = 'anonymous';
+    dubEl.crossOrigin = 'anonymous';
 
     origAudioRef.current = origEl;
     dubAudioRef.current = dubEl;
 
-    try {
-      const origSource = ctx.createMediaElementSource(origEl);
-      const origGain = ctx.createGain();
-      origSource.connect(origGain).connect(ctx.destination);
-      origGainRef.current = origGain;
-    } catch (e) {
-      console.warn('Original MediaElementSource fallback', e);
+    if (ctx) {
+      try {
+        const origSource = ctx.createMediaElementSource(origEl);
+        const origGain = ctx.createGain();
+        origSource.connect(origGain).connect(ctx.destination);
+        origGainRef.current = origGain;
+      } catch (e) {
+        console.warn('Original MediaElementSource fallback to direct element', e);
+      }
+
+      try {
+        const dubSource = ctx.createMediaElementSource(dubEl);
+        const dubGain = ctx.createGain();
+        dubSource.connect(dubGain).connect(ctx.destination);
+        dubGainRef.current = dubGain;
+      } catch (e) {
+        console.warn('Dubbed MediaElementSource fallback to direct element', e);
+      }
     }
 
-    try {
-      const dubSource = ctx.createMediaElementSource(dubEl);
-      const dubGain = ctx.createGain();
-      dubSource.connect(dubGain).connect(ctx.destination);
-      dubGainRef.current = dubGain;
-    } catch (e) {
-      console.warn('Dubbed MediaElementSource fallback', e);
-    }
+    origEl.onended = () => {
+      setIsPlaying(false);
+      dubEl.pause();
+    };
 
     return () => {
       origEl.pause();
       dubEl.pause();
-      ctx.close();
+      if (ctx && ctx.state !== 'closed') {
+        try {
+          ctx.close();
+        } catch (_) {}
+      }
     };
   }, []);
 
@@ -65,37 +83,75 @@ export function useWebAudio(originalUrl?: string, dubbedMixUrl?: string) {
 
   useEffect(() => {
     if (dubAudioRef.current && dubbedMixUrl) {
+      const wasPlaying = isPlaying;
+      const curSec = currentTimeMs / 1000;
       dubAudioRef.current.src = dubbedMixUrl;
       dubAudioRef.current.load();
+      if (wasPlaying) {
+        dubAudioRef.current.currentTime = curSec;
+        dubAudioRef.current.play().catch(() => {});
+      }
     }
   }, [dubbedMixUrl]);
 
-  // Volume & Mute updates (Supports 0.0 to 2.0 via GainNode)
+  // Real-time Volume & Mute updates (Direct HTML5 Audio + WebAudio Gain boost)
   useEffect(() => {
-    const targetVol = isMuteOrig ? 0 : volOrig;
+    const isMuted = isMuteOrig || volOrig === 0;
+    const clampedVol = Math.max(0, Math.min(1.0, volOrig));
+
+    if (origAudioRef.current) {
+      origAudioRef.current.muted = isMuted;
+      origAudioRef.current.volume = isMuted ? 0 : clampedVol;
+    }
+
     if (origGainRef.current) {
-      origGainRef.current.gain.value = targetVol;
-    } else if (origAudioRef.current) {
-      origAudioRef.current.volume = Math.min(1.0, targetVol);
+      try {
+        origGainRef.current.gain.value = isMuted ? 0 : volOrig;
+      } catch (e) {
+        // GainNode fallback
+      }
     }
   }, [volOrig, isMuteOrig]);
 
   useEffect(() => {
-    const targetVol = isMuteDub ? 0 : volDub;
+    const isMuted = isMuteDub || volDub === 0;
+    const clampedVol = Math.max(0, Math.min(1.0, volDub));
+
+    if (dubAudioRef.current) {
+      dubAudioRef.current.muted = isMuted;
+      dubAudioRef.current.volume = isMuted ? 0 : clampedVol;
+    }
+
     if (dubGainRef.current) {
-      dubGainRef.current.gain.value = targetVol;
-    } else if (dubAudioRef.current) {
-      dubAudioRef.current.volume = Math.min(1.0, targetVol);
+      try {
+        dubGainRef.current.gain.value = isMuted ? 0 : volDub;
+      } catch (e) {
+        // GainNode fallback
+      }
     }
   }, [volDub, isMuteDub]);
 
-  // Time tracking loop
+  // Precise Time tracking loop with cross-track drift synchronization
   useEffect(() => {
     let animId: number;
 
     const updateTime = () => {
       if (origAudioRef.current && isPlaying) {
-        setCurrentTimeMs(Math.round(origAudioRef.current.currentTime * 1000));
+        const curSec = origAudioRef.current.currentTime;
+        setCurrentTimeMs(Math.round(curSec * 1000));
+
+        // Lock dubbed track to original track if drift exceeds 120ms
+        if (
+          dubAudioRef.current &&
+          !dubAudioRef.current.paused &&
+          dubAudioRef.current.readyState >= 2
+        ) {
+          const drift = Math.abs(dubAudioRef.current.currentTime - curSec);
+          if (drift > 0.12) {
+            dubAudioRef.current.currentTime = curSec;
+          }
+        }
+
         animId = requestAnimationFrame(updateTime);
       }
     };
@@ -109,7 +165,7 @@ export function useWebAudio(originalUrl?: string, dubbedMixUrl?: string) {
 
   const play = useCallback(() => {
     if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
-      audioCtxRef.current.resume();
+      audioCtxRef.current.resume().catch(() => {});
     }
 
     const curSec = currentTimeMs / 1000;
