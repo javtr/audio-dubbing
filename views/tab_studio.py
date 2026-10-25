@@ -126,6 +126,13 @@ class TabStudioView(ctk.CTkFrame):
         )
         self.btn_auto_split_top.pack(side="left", padx=2)
 
+        self.btn_auto_split_all = ctk.CTkButton(
+            dub_header, text="⚡ Auto-dividir Todos", width=145, height=24,
+            fg_color="#0284c7", hover_color="#0369a1",
+            command=self._auto_split_all_action
+        )
+        self.btn_auto_split_all.pack(side="left", padx=2)
+
         self.btn_reset_dub = ctk.CTkButton(
             dub_header, text="↺ Resetear a Original", width=145, height=24,
             fg_color="#a83232", hover_color="#822727",
@@ -230,6 +237,13 @@ class TabStudioView(ctk.CTkFrame):
             command=self._auto_split_selected_segment
         )
         self.btn_auto_split_bottom.pack(side="left", padx=5)
+
+        self.btn_auto_split_all_bottom = ctk.CTkButton(
+            bot_frame, text="⚡ Auto-dividir Todos", font=("Arial", 13, "bold"),
+            fg_color="#0284c7", hover_color="#0369a1",
+            command=self._auto_split_all_action
+        )
+        self.btn_auto_split_all_bottom.pack(side="left", padx=5)
 
         # Exportar
         self.btn_export_video = ctk.CTkButton(
@@ -572,6 +586,180 @@ class TabStudioView(ctk.CTkFrame):
             f"• Silencio final: {pause_end / 1000.0:.1f}s\n\n"
             "El audio ha sido cortado y sincronizado al instante en la línea de tiempo."
         )
+
+    def _get_auto_split_candidates(self):
+        """Devuelve los segmentos que califican para auto-división masiva (silencio >= 4s y con comas)."""
+        processor = self.app.processor
+        if not processor or not processor.metadata:
+            return []
+
+        audios_dir = self.app.project_paths.get("audios_dir") if self.app.project_paths else None
+        if not audios_dir or not os.path.exists(audios_dir):
+            return []
+
+        candidates = []
+        for seg in processor.metadata:
+            start_ms = seg.get('start_ms', 0)
+            end_ms = seg.get('end_ms', 0)
+            slot_span = end_ms - start_ms
+            if slot_span < 4000:
+                continue
+
+            fname = seg.get('filename', '')
+            fpath = os.path.join(audios_dir, fname) if fname else None
+            if not fpath or not os.path.isfile(fpath) or os.path.getsize(fpath) == 0:
+                continue
+
+            try:
+                audio_len = len(AudioSegment.from_file(fpath))
+            except Exception:
+                continue
+
+            dead_air = slot_span - audio_len
+            if dead_air < 4000:
+                continue
+
+            text_en = seg.get('translated', '').strip()
+            if self._find_best_split_point(text_en) is None:
+                continue
+
+            candidates.append((seg, fpath, audio_len, dead_air))
+
+        return candidates
+
+    def _auto_split_all_action(self):
+        candidates = self._get_auto_split_candidates()
+        if not candidates:
+            messagebox.showinfo(
+                "Sin segmentos para dividir",
+                "No se encontraron segmentos con silencios >= 4.0s que contengan comas o conjunciones para auto-dividir."
+            )
+            return
+
+        n = len(candidates)
+        resp = messagebox.askyesno(
+            "Confirmar Auto-División Masiva",
+            f"Se encontraron {n} segmentos con silencios largos (>= 4.0s) listos para auto-dividir.\n\n"
+            "El proceso cortará físicamente los archivos de audio y repartirá el silencio muerto equitativamente "
+            "(50% en medio y 50% al final) a velocidad natural 1.00x.\n\n"
+            f"¿Deseas procesar los {n} segmentos automáticamente?"
+        )
+        if not resp:
+            return
+
+        self.btn_auto_split_all.configure(state="disabled", text="⚡ Procesando...")
+        self.btn_auto_split_all_bottom.configure(state="disabled", text="⚡ Procesando...")
+
+        def _worker():
+            audios_dir = self.app.project_paths.get("audios_dir")
+            completed_count = 0
+
+            for idx, (seg, fpath, audio_len, dead_air) in enumerate(candidates):
+                seg_id = seg.get('id')
+                self.app.run_on_ui_thread(
+                    lambda i=idx+1, sid=seg_id: self.lbl_dub_hover.configure(
+                        text=f"⚡ Auto-dividiendo {i} de {n} [{sid}]...",
+                        text_color="#38bdf8"
+                    )
+                )
+
+                try:
+                    # 1. División sintáctica de texto
+                    text_en = seg.get('translated', '').strip()
+                    text_es = seg.get('original', '').strip()
+                    split_idx_en = self._find_best_split_point(text_en)
+                    part1_en = text_en[:split_idx_en].strip()
+                    part2_en = text_en[split_idx_en:].lstrip(",:; ").strip()
+
+                    split_idx_es = self._find_best_split_point(text_es)
+                    if split_idx_es is not None:
+                        part1_es = text_es[:split_idx_es].strip()
+                        part2_es = text_es[split_idx_es:].lstrip(",:; ").strip()
+                    else:
+                        words_es = text_es.split()
+                        hw = max(1, len(words_es) // 2)
+                        part1_es = " ".join(words_es[:hw])
+                        part2_es = " ".join(words_es[hw:])
+
+                    # 2. Corte acústico
+                    full_audio = AudioSegment.from_file(fpath)
+                    w1 = max(1, len(part1_en.split()))
+                    w2 = max(1, len(part2_en.split()))
+                    approx_cut = int(audio_len * (w1 / (w1 + w2)))
+                    acoustic_cut = self._find_acoustic_split_point(full_audio, approx_cut, window_ms=600)
+
+                    part1_audio = full_audio[:acoustic_cut]
+                    part2_audio = full_audio[acoustic_cut:]
+                    dur_1 = len(part1_audio)
+                    dur_2 = len(part2_audio)
+
+                    # 3. Exportar archivos WAV físicos
+                    fname = seg.get('filename', '')
+                    base_name = os.path.splitext(fname)[0]
+                    clean_base = re.sub(r'_[ab]$', '', base_name)
+                    name_a = f"{clean_base}_a.wav"
+                    name_b = f"{clean_base}_b.wav"
+                    part1_audio.export(os.path.join(audios_dir, name_a), format="wav")
+                    part2_audio.export(os.path.join(audios_dir, name_b), format="wav")
+
+                    self.app.processor.processed_segments[name_a] = part1_audio
+                    self.app.processor.processed_segments[name_b] = part2_audio
+
+                    # 4. Cálculo de tiempos y reparto 50/50
+                    start_ms = seg.get('start_ms', 0)
+                    end_ms = seg.get('end_ms', 0)
+                    tot_span = end_ms - start_ms
+                    actual_dead_air = max(0, tot_span - (dur_1 + dur_2))
+                    pause_mid = actual_dead_air // 2
+
+                    start_1 = start_ms
+                    end_1 = start_1 + dur_1
+                    start_2 = end_1 + pause_mid
+                    end_2 = end_ms
+
+                    # 5. Sustituir en metadatos
+                    clean_id = re.sub(r'_[ab]$', '', str(seg_id))
+                    seg_a = copy.deepcopy(seg)
+                    seg_a['id'] = f"{clean_id}_a"
+                    seg_a['filename'] = name_a
+                    seg_a['translated'] = part1_en
+                    seg_a['original'] = part1_es
+                    seg_a['start_ms'] = start_1
+                    seg_a['end_ms'] = end_1
+
+                    seg_b = copy.deepcopy(seg)
+                    seg_b['id'] = f"{clean_id}_b"
+                    seg_b['filename'] = name_b
+                    seg_b['translated'] = part2_en
+                    seg_b['original'] = part2_es
+                    seg_b['start_ms'] = start_2
+                    seg_b['end_ms'] = end_2
+
+                    cur_idx = next((i for i, s in enumerate(self.app.processor.metadata) if str(s.get('id')) == str(seg_id)), None)
+                    if cur_idx is None:
+                        continue
+                    self.app.processor.metadata[cur_idx] = seg_a
+                    self.app.processor.metadata.insert(cur_idx + 1, seg_b)
+
+                    completed_count += 1
+                except Exception as e:
+                    print(f"[ERROR Auto-split all] Fallo en segmento {seg.get('id')}: {e}")
+
+            def _finish_ui():
+                self.btn_auto_split_all.configure(state="normal", text="⚡ Auto-dividir Todos")
+                self.btn_auto_split_all_bottom.configure(state="normal", text="⚡ Auto-dividir Todos")
+                # Guardado de metadata y refresco único consolidado (rápido y fluido)
+                self._on_metadata_modified()
+                messagebox.showinfo(
+                    "Auto-División Masiva Completada",
+                    f"¡Se auto-dividieron {completed_count} de {n} segmentos exitosamente!\n\n"
+                    "Todos los audios fueron cortados acústicamente y sincronizados a velocidad 1.00x "
+                    "con el silencio muerto repartido equitativamente (50% en medio y 50% al final)."
+                )
+
+            self.app.run_on_ui_thread(_finish_ui)
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def refresh(self):
         for w in self.mid_scroll.winfo_children():
