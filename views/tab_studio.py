@@ -322,6 +322,7 @@ class TabStudioView(ctk.CTkFrame):
             self.app.processor.mark_mix_dirty()
             self.app.processor.recalculate_end_times()
             self.app.pm.save_project_metadata(self.app.current_project, self.app.processor.metadata)
+        # Refresco consolidado en todas las pestañas
         self.app.notify_metadata_updated()
 
     def _delete_selected_segment(self):
@@ -820,6 +821,7 @@ class TabStudioView(ctk.CTkFrame):
 
             self.app.processor.recalculate_end_times()
             self.app.pm.save_project_metadata(self.app.current_project, self.app.processor.metadata)
+            # Refresco consolidado en todas las pestañas
             self.app.notify_metadata_updated()
             messagebox.showinfo("Éxito", "Tiempos actualizados y proyecto recalculado.")
         except ValueError:
@@ -850,6 +852,7 @@ class TabStudioView(ctk.CTkFrame):
         self.timeline_ctrl.selected_segment_id = None
         self._update_delete_button_state()
         self.app.pm.save_project_metadata(self.app.current_project, restored)
+        # Refresco consolidado en todas las pestañas
         self.app.notify_metadata_updated()
         messagebox.showinfo("Reseteado", "Todos los segmentos han sido restaurados a sus posiciones originales.")
 
