@@ -1,7 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { useProjectStore } from '../stores/useProjectStore';
 import * as api from '../api/client';
-import { Mic, Copy, Save, Timer, Scissors, CheckCircle, AlertTriangle, AlertCircle } from 'lucide-react';
+import {
+  Mic,
+  Copy,
+  Save,
+  Timer,
+  Scissors,
+  CheckCircle,
+  AlertTriangle,
+  Sparkles,
+  Download,
+  FileText,
+} from 'lucide-react';
 
 export const ScriptTab: React.FC = () => {
   const {
@@ -10,6 +21,7 @@ export const ScriptTab: React.FC = () => {
     validation,
     liveStatusMessage,
     saveCurrentMetadata,
+    setSegments,
   } = useProjectStore();
 
   const [transcript, setTranscript] = useState('');
@@ -17,6 +29,8 @@ export const ScriptTab: React.FC = () => {
   const [splitOnPauses, setSplitOnPauses] = useState(true);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isAligning, setIsAligning] = useState(false);
+  const [isCopyingRetranslation, setIsCopyingRetranslation] = useState(false);
+  const [isApplyingRetranslation, setIsApplyingRetranslation] = useState(false);
   const [bannerNotice, setBannerNotice] = useState<string | null>(null);
 
   // Sync JSON text when segments in store change
@@ -47,7 +61,7 @@ export const ScriptTab: React.FC = () => {
     try {
       const res = await api.generateGeminiPrompt(currentProject, transcript);
       await navigator.clipboard.writeText(res.prompt);
-      setBannerNotice('¡Prompt copiado al portapapeles! Pégalo en Gemini Web y copia el JSON resultante.');
+      setBannerNotice('¡Prompt inicial copiado! Pégalo en Gemini Web y copia el JSON resultante a la caja derecha.');
       setTimeout(() => setBannerNotice(null), 6000);
     } catch (err: any) {
       alert(`Error al generar prompt: ${err.message}`);
@@ -59,7 +73,7 @@ export const ScriptTab: React.FC = () => {
     try {
       const parsed = JSON.parse(jsonText);
       if (!Array.isArray(parsed)) throw new Error('El JSON debe ser una lista de segmentos [ ... ]');
-      useProjectStore.getState().setSegments(parsed);
+      setSegments(parsed);
       await saveCurrentMetadata();
       setBannerNotice(`¡Guardados ${parsed.length} segmentos en el proyecto!`);
       setTimeout(() => setBannerNotice(null), 4000);
@@ -85,12 +99,55 @@ export const ScriptTab: React.FC = () => {
     }
   };
 
+  const handleCopyRetranslationPrompt = async () => {
+    if (!currentProject) return;
+    if (!segments || segments.length === 0) {
+      alert('Primero sincroniza y alinea los tiempos para tener los fragmentos divididos en el proyecto.');
+      return;
+    }
+    setIsCopyingRetranslation(true);
+    try {
+      const res = await api.generateRetranslationPrompt(currentProject);
+      await navigator.clipboard.writeText(res.prompt);
+      setBannerNotice(
+        `¡Prompt de re-traducción copiado (${res.segments_count} frases)! Pégalo en Gemini Web para traducir con la regla: palabras en inglés ≥ palabras en español (sin inventar frases).`
+      );
+      setTimeout(() => setBannerNotice(null), 8000);
+    } catch (err: any) {
+      alert(`Error al generar prompt de re-traducción: ${err?.response?.data?.detail || err.message}`);
+    } finally {
+      setIsCopyingRetranslation(false);
+    }
+  };
+
+  const handleApplyRetranslation = async () => {
+    if (!currentProject) return;
+    try {
+      const parsed = JSON.parse(jsonText);
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        alert('Pega el JSON devuelto por Gemini en la caja de texto.');
+        return;
+      }
+      setIsApplyingRetranslation(true);
+      const res = await api.applyRetranslation(currentProject, parsed);
+      setSegments(res.metadata);
+      setBannerNotice(
+        `¡Re-traducción aplicada a ${res.updated_count} frases! Todos los tiempos acústicos milimétricos se conservaron intactos.`
+      );
+      setTimeout(() => setBannerNotice(null), 6000);
+    } catch (err: any) {
+      alert(`Error al aplicar re-traducción: ${err?.response?.data?.detail || err.message}`);
+    } finally {
+      setIsApplyingRetranslation(false);
+    }
+  };
+
   return (
     <div className="max-w-7xl mx-auto p-4 space-y-4">
       {/* Banner Notice / Live Status */}
       {(bannerNotice || liveStatusMessage) && (
-        <div className="bg-sky-500/10 border border-sky-500/30 text-sky-400 px-4 py-2.5 rounded-xl text-xs font-medium flex items-center gap-2">
-          <CheckCircle className="w-4 h-4 shrink-0" />
+        <div className="bg-sky-500/10 border border-sky-500/30 text-sky-400 px-4 py-2.5 rounded-xl text-xs font-medium flex items-center gap-2 shadow-sm">
+          <CheckCircle className="w-4 h-4 shrink-0 text-sky-400" />
           <span>{bannerNotice || liveStatusMessage}</span>
         </div>
       )}
@@ -138,9 +195,10 @@ export const ScriptTab: React.FC = () => {
               <button
                 onClick={handleCopyPrompt}
                 className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition flex items-center gap-1.5"
+                title="Copia el prompt inicial para que Gemini divida y traduzca el audio por primera vez"
               >
                 <Copy className="w-3.5 h-3.5" />
-                <span>Copiar Prompt</span>
+                <span>Copiar Prompt Inicial</span>
               </button>
             </div>
           </div>
@@ -153,14 +211,14 @@ export const ScriptTab: React.FC = () => {
           />
         </div>
 
-        {/* Right Column: Gemini JSON & Whisper Alignment */}
+        {/* Right Column: Gemini JSON & Whisper Alignment & Re-translation */}
         <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 flex flex-col h-[calc(100vh-210px)]">
           <div className="flex items-center justify-between pb-3 border-b border-neutral-800 flex-wrap gap-2">
             <h2 className="text-sm font-bold text-white flex items-center gap-2">
-              <span>Paso 1B: JSON de Gemini y Tiempos</span>
+              <span>Paso 1B: JSON y Tiempos Acústicos</span>
             </h2>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <label className="flex items-center gap-1.5 text-xs text-sky-400 font-semibold cursor-pointer select-none bg-sky-500/10 border border-sky-500/30 px-2 py-1 rounded-lg">
                 <input
                   type="checkbox"
@@ -173,20 +231,44 @@ export const ScriptTab: React.FC = () => {
               </label>
 
               <button
-                onClick={handleSaveJson}
-                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 text-neutral-200 transition flex items-center gap-1.5"
-              >
-                <Save className="w-3.5 h-3.5" />
-                <span>Guardar</span>
-              </button>
-
-              <button
                 onClick={handleAlign}
                 disabled={isAligning}
                 className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition flex items-center gap-1.5 disabled:opacity-50"
+                title="Sincroniza y subdivide automáticamente por silencios en el audio original"
               >
                 <Timer className="w-3.5 h-3.5" />
-                <span>{isAligning ? 'Sincronizando...' : 'Sincronizar Tiempos'}</span>
+                <span>{isAligning ? 'Sincronizando...' : '1. Sincronizar'}</span>
+              </button>
+
+              {/* Botón Nuevo: Re-traducción Prompt */}
+              <button
+                onClick={handleCopyRetranslationPrompt}
+                disabled={isCopyingRetranslation || segments.length === 0}
+                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-violet-600 hover:bg-violet-500 text-white transition flex items-center gap-1.5 shadow-sm shadow-violet-600/30 disabled:opacity-40"
+                title="Genera y copia el prompt con las frases ya divididas acústicamente para traducirlas sin inventar texto"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>2. Copiar Prompt Re-traducir</span>
+              </button>
+
+              {/* Botón Aplicar Re-traducción */}
+              <button
+                onClick={handleApplyRetranslation}
+                disabled={isApplyingRetranslation}
+                className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white transition flex items-center gap-1 disabled:opacity-50"
+                title="Aplica el JSON traducido por Gemini conservando los tiempos acústicos milimétricos de Whisper"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>3. Aplicar Re-traducción</span>
+              </button>
+
+              <button
+                onClick={handleSaveJson}
+                className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 text-neutral-200 transition flex items-center gap-1"
+                title="Guardar JSON manualmente"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>Guardar</span>
               </button>
             </div>
           </div>
@@ -202,4 +284,3 @@ export const ScriptTab: React.FC = () => {
     </div>
   );
 };
-

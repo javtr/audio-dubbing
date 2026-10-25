@@ -290,6 +290,58 @@ def align_script(req: AlignRequest):
     return {"status": "started"}
 
 
+class RetranslationPromptRequest(BaseModel):
+    project: str
+
+@app.post("/api/script/generate-retranslation-prompt")
+def generate_retranslation_prompt(req: RetranslationPromptRequest):
+    metadata = pm.load_project_metadata(req.project)
+    if not metadata:
+        raise HTTPException(status_code=400, detail="No hay segmentos en el proyecto para re-traducir.")
+    lang = pm.get_project_language(req.project)
+    prompt = aligner.generate_retranslation_prompt(metadata, target_lang=lang)
+    return {"prompt": prompt, "language": lang, "segments_count": len(metadata)}
+
+
+class ApplyRetranslationRequest(BaseModel):
+    project: str
+    retranslated_json: List[Dict[str, Any]]
+
+@app.post("/api/script/apply-retranslation")
+def apply_retranslation(req: ApplyRetranslationRequest):
+    metadata = pm.load_project_metadata(req.project)
+    new_data = req.retranslated_json
+
+    new_map = {str(item.get("id")): item for item in new_data if "id" in item}
+
+    updated_count = 0
+    for idx, seg in enumerate(metadata):
+        sid = str(seg.get("id"))
+        if sid in new_map:
+            match = new_map[sid]
+            if "translated" in match:
+                seg["translated"] = match["translated"].strip()
+            if "tone" in match:
+                seg["tone"] = match["tone"].strip()
+            updated_count += 1
+        elif idx < len(new_data):
+            match = new_data[idx]
+            if "translated" in match:
+                seg["translated"] = match["translated"].strip()
+            if "tone" in match:
+                seg["tone"] = match["tone"].strip()
+            updated_count += 1
+
+    pm.save_project_metadata(req.project, metadata)
+    val = TimingValidator.validate(metadata)
+    return {
+        "status": "ok",
+        "updated_count": updated_count,
+        "metadata": metadata,
+        "validation": val
+    }
+
+
 # ==================== TTS & CLONING API ====================
 
 @app.get("/api/tts/status")

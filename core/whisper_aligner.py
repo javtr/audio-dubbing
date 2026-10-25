@@ -1,4 +1,5 @@
 import copy
+import json
 import gc
 import re
 import unicodedata
@@ -77,6 +78,64 @@ class WhisperAligner:
             return self._build_portuguese_prompt(spanish_text)
         return self._build_english_prompt(spanish_text)
 
+
+    def generate_retranslation_prompt(self, segments_data, target_lang="en"):
+        """
+        Genera un prompt con los segmentos ya divididos acústicamente para que Gemini
+        vuelva a traducir el texto en español sin inventar frases ni inflar palabras.
+        """
+        is_pt = str(target_lang).lower() in ("pt", "portuguese")
+        lang_name = "PORTUGUÉS DE BRASIL (pt-BR)" if is_pt else "INGLÉS (English)"
+        lang_code = "pt" if is_pt else "en"
+
+        input_list = []
+        for s in segments_data:
+            orig = s.get("original", "").strip()
+            words_es = len(orig.split())
+            input_list.append({
+                "id": s.get("id"),
+                "original": orig,
+                "palabras_es": words_es,
+                "filename": s.get("filename", "")
+            })
+
+        input_json_str = json.dumps(input_list, indent=2, ensure_ascii=False)
+
+        prompt = f"""Actúa como un director de doblaje profesional y traductor audiovisual experto.
+A continuación tienes una lista de fragmentos de video en español que YA HAN SIDO DIVIDIDOS y sincronizados acústicamente en la línea de tiempo.
+
+🎯 TU MISIÓN:
+Traducir cada uno de los textos en español al {lang_name} para ser doblado por IA (TTS).
+
+📏 REGLA CRÍTICA DE CONTEO Y FIDELIDAD (SIN INVENTAR NADA):
+1. **IGUALAR O SUPERAR LEVEMENTE EL NÚMERO DE PALABRAS:**
+   - La traducción en {lang_name} debe tener un número de palabras MAYOR O IGUAL (≥) al número de palabras en español del segmento.
+   - Ideal: que el número de palabras sea muy cercano (entre el 100% y el 110% de las palabras en español).
+2. **PROHIBIDO INVENTAR FRASES O RELLENO ARTIFICIAL:**
+   - NO agregues ideas, frases introductorias ni muletillas que no existan en el original en español (NO añadas muletillas artificiales como "as you can see here", "keep in mind", "remember that", etc., salvo que el original lo exprese).
+   - Traduce de forma directa, fiel, profesional y fluida.
+3. **MANTENER LA ESTRUCTURA EXACTA:**
+   - NO unas ni dividas los segmentos. Cada "id" debe devolver exactamente una traducción para su "original".
+   - Conserva los mismos "id" y "filename".
+   - Asigna un "tone" ("Conversational", "Explanatory", "Effusive", "Serious").
+
+Devuelve ÚNICAMENTE un bloque JSON válido con esta estructura exacta (sin texto introductorio, ni comentarios, ni explicaciones adicionales):
+
+[
+  {{
+    "id": "seg_000",
+    "original": "...",
+    "translated": "<traducción en {lang_name} verificando que palabras_{lang_code} >= palabras_es sin inventar nada>",
+    "tone": "Conversational",
+    "filename": "segment_000.wav"
+  }}
+]
+
+--- FRAGMENTOS A TRADUCIR EN ESPAÑOL ---
+{input_json_str}
+"""
+        return prompt
+
     def _build_english_prompt(self, spanish_text):
         prompt = f"""Actúa como un director de doblaje profesional y traductor audiovisual experto en adaptación de guiones (Script Adaptation & Dubbing Localization).
 A continuación tienes la transcripción en español de un video para ser doblado al inglés mediante clonación de voz por IA (TTS).
@@ -87,25 +146,17 @@ A continuación tienes la transcripción en español de un video para ser doblad
 - ¿POR QUÉ ES OBLIGATORIO?: Los segmentos largos causan desajustes temporales acumulativos. Fragmentos breves garantizan una sincronización labial y de video perfecta.
 - PUNTOS DE CORTE NATURALES: Corta en puntos y seguido, comas de transición, pausas de respiración o conectores lógicos (ej. "por lo tanto", "ahora bien", "por ejemplo", "en este caso"). Cada segmento debe coincidir con una sola acción o concepto en pantalla.
 
-🎯 REGLA DE ORO: EXPANSIÓN Y CONTEO OBLIGATORIO EN INGLÉS (+25% A +35%, OBJETIVO: ~128% A 130%)
-En el doblaje por IA mediante clonación de voz, existe una diferencia fonética y de velocidad de habla crítica entre ambos idiomas:
-- Las palabras en inglés son notablemente más cortas (muchas monosílabas) y el motor de IA las pronuncia a un ritmo más ágil (~3.3 palabras/segundo) que el español pausado del video original (~2.4 palabras/segundo).
-- Si traduces igualando el número de palabras (1:1), el audio en inglés terminará mucho antes de tiempo, provocando silencios muertos prolongados e incómodos al final de cada segmento.
-- RANGO VÁLIDO Y OBLIGATORIO: La adaptación en inglés DEBE contener entre un 125% y un 135% de palabras respecto a la frase original en español (un incremento obligatorio de entre +25% y +35%, con un objetivo ideal del +28% al +30%). El sistema marcará como error cualquier segmento que quede por debajo del 125%.
+🎯 REGLA DE ORO: EQUIVALENCIA Y CONTEO NATURAL (INGLÉS ≥ ESPAÑOL, RANGO: 100% A 110%)
+En el doblaje por IA mediante clonación de voz:
+- La adaptación en inglés DEBE igualar o superar levemente el número de palabras en español del segmento (conteo en inglés ≥ conteo en español).
+- RANGO IDEAL: Entre el 100% y el 110% de las palabras en español.
+- 🚫 PROHIBIDO INVENTAR FRASES O RELLENO ARTIFICIAL: NO inventes conceptos, frases introductorias ni muletillas que no existan en el original en español (NO agregues muletillas artificiales como "as you can see right here", "keep in mind that", "make sure to look at" salvo que el orador lo haya dicho expresamente).
+- FIDELIDAD Y NATURALIDAD: Traduce con exactitud, tono nativo, vocabulario técnico preciso y oraciones completas y fluidas.
 
-📐 PROCEDIMIENTO OBLIGATORIO DE CONTEO Y CÁLCULO PARA CADA SEGMENTO:
-Antes de redactar la versión final de cada fragmento, DEBES seguir este proceso:
-1. Divide el texto fuente en fragmentos pequeños (idealmente entre 30 y 60 palabras en español, nunca más de 70-80 palabras).
-2. Cuenta las palabras exactas de la frase en español del segmento (ejemplo: 40 palabras).
-3. Calcula tu rango objetivo de palabras en inglés (125% a 135%):
-   - Mínimo en inglés (125%): 40 * 1.25 = 50 palabras.
-   - Máximo en inglés (135%): 40 * 1.35 = 54 palabras.
-   - Objetivo ideal (128% - 130%): ~51 a 52 palabras.
-4. Redacta la adaptación en inglés expandiendo naturalmente la explicación:
-   - ¿Cómo alcanzar el rango (+25% a +35%) sin relleno artificial?: Sé más descriptivo y didáctico. Emplea oraciones completas con sujeto explícito, añade conectores aclaratorios (ej. "as you can see right here", "this allows you to properly configure", "keep in mind that", "make sure to take a look at", "in order to achieve this"), especifica el propósito de las acciones en pantalla y utiliza terminología técnica precisa en lugar de pronombres vagos.
-5. Cuenta cuántas palabras obtuviste en inglés:
-   - Si tu traducción en inglés quedó por debajo del 125% (< 50 palabras): ¡NO LA ENTREGUES ASÍ! Es demasiado corta y dejará silencio muerto en el video. Amplía la redacción explicando con mayor claridad o detalle técnico.
-   - Si tu traducción superó el 135% (> 54 palabras): Condensa levemente oraciones accesorias para no sobrepasar el límite.
+📐 PROCEDIMIENTO DE CONTEO PARA CADA SEGMENTO:
+1. Cuenta las palabras de la frase en español del segmento (ejemplo: 40 palabras).
+2. Redacta la versión en inglés procurando que tenga al menos el mismo número de palabras o un poco más (ejemplo: 40 a 44 palabras).
+3. Si quedó ligeramente por debajo (< 40 palabras), usa oraciones completas con sujeto explícito y terminología técnica exacta sin inventar información inexistente.
 
 ⚠️ OTRAS REGLAS OBLIGATORIAS:
 1. **NO RESUMAS NI OMITAS INFORMACIÓN:** No es un resumen. Debes traducir TODOS los conceptos, detalles, pasos técnicos, advertencias y matices expresados en el original.
@@ -123,14 +174,14 @@ Devuelve ÚNICAMENTE un bloque de código JSON válido con esta estructura exact
   {{
     "id": "seg-0",
     "original": "<frase en español (entre 30 y 60 palabras, máx 70-80)>",
-    "translated": "<adaptación en inglés verificando que tenga entre el 125% y el 135% de palabras (+25% a +35% más que el español)>",
+    "translated": "<traducción en inglés verificando que palabras_inglés >= palabras_español (rango 100%-110%) sin inventar frases inexistentes>",
     "tone": "Conversational",
     "filename": "segment_000.wav"
   }},
   {{
     "id": "seg-1",
     "original": "<frase en español (entre 30 y 60 palabras, máx 70-80)>",
-    "translated": "<adaptación en inglés verificando que tenga entre el 125% y el 135% de palabras (+25% a +35% más que el español)>",
+    "translated": "<traducción en inglés verificando que palabras_inglés >= palabras_español (rango 100%-110%) sin inventar frases inexistentes>",
     "tone": "Explanatory",
     "filename": "segment_001.wav"
   }}

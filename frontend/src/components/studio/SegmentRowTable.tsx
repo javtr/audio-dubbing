@@ -278,3 +278,4 @@ export const SegmentRowTable: React.FC<Props> = ({ onRefreshWaveforms }) => {
     </div>
   );
 };
+

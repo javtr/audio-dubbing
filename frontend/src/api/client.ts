@@ -161,3 +161,16 @@ export const deleteSegment = async (project: string, segmentId: string | number)
   });
   return res.data;
 };
+
+export const generateRetranslationPrompt = async (project: string) => {
+  const res = await api.post('/script/generate-retranslation-prompt', { project });
+  return res.data;
+};
+
+export const applyRetranslation = async (project: string, retranslatedJson: any[]) => {
+  const res = await api.post('/script/apply-retranslation', {
+    project,
+    retranslated_json: retranslatedJson,
+  });
+  return res.data;
+};
