@@ -309,9 +309,38 @@ class TabStudioView(ctk.CTkFrame):
     def _can_auto_split(self, seg_id):
         if not seg_id or not self.app.processor or not self.app.processor.metadata:
             return False
-        for sil in self.timeline_ctrl.silences:
-            if sil[2] == seg_id and sil[3] >= 4.0:
+
+        # 1. Comprobar en current_silences usando comparación segura de str
+        silences = getattr(self.timeline_ctrl, "current_silences", []) or getattr(self.timeline_ctrl, "silences", [])
+        for sil in silences:
+            if str(sil[2]) == str(seg_id) and sil[3] >= 4.0:
                 return True
+
+        # 2. Comprobar directamente en metadatos y archivo de audio en disco por robustez
+        seg = next((s for s in self.app.processor.metadata if str(s.get('id')) == str(seg_id)), None)
+        if not seg:
+            return False
+
+        start_ms = seg.get('start_ms', 0)
+        end_ms = seg.get('end_ms', 0)
+        slot_span = end_ms - start_ms
+        if slot_span < 4000:
+            return False
+
+        audios_dir = self.app.project_paths.get("audios_dir") if self.app.project_paths else None
+        fname = seg.get('filename', '')
+        if audios_dir and fname:
+            fpath = os.path.join(audios_dir, fname)
+            if os.path.isfile(fpath):
+                try:
+                    from pydub import AudioSegment
+                    audio_dur = len(AudioSegment.from_file(fpath))
+                    gap_ms = slot_span - audio_dur
+                    if gap_ms >= 4000:
+                        return True
+                except Exception:
+                    pass
+
         return False
 
     def _update_delete_button_state(self):
@@ -410,8 +439,9 @@ class TabStudioView(ctk.CTkFrame):
                 voice_dur = 0
 
         if voice_dur <= 0 or voice_dur >= total_span:
-            for sil in self.timeline_ctrl.silences:
-                if sil[2] == seg_id:
+            silences = getattr(self.timeline_ctrl, "current_silences", []) or getattr(self.timeline_ctrl, "silences", [])
+            for sil in silences:
+                if str(sil[2]) == str(seg_id):
                     voice_dur = int(total_span - (sil[3] * 1000))
                     break
         if voice_dur <= 0 or voice_dur >= total_span:

@@ -31,6 +31,14 @@ class TimelineController:
         self.drag_has_moved = False
         self.current_silences = []
 
+    @property
+    def silences(self):
+        return self.current_silences
+
+    @silences.setter
+    def silences(self, val):
+        self.current_silences = val or []
+
         # Control de rendimiento (Throttling y State Diffing)
         self._last_motion_time = 0.0
         self._last_dub_hover_text = None
@@ -73,6 +81,16 @@ class TimelineController:
         processor = self.get_processor()
         if not processor or not processor.metadata:
             return None
+        # Comprobar si el clic cayó exactamente sobre un silencio conocido
+        for sil in self.current_silences:
+            sil_s = sil[0]
+            sil_e = sil[1]
+            sil_id = sil[2]
+            if sil_s <= ms <= sil_e:
+                for seg in processor.metadata:
+                    if str(seg.get("id")) == str(sil_id):
+                        return seg
+
         for seg in processor.metadata:
             s = seg.get("start_ms", 0)
             e = seg.get("end_ms", 0)
@@ -224,14 +242,12 @@ class TimelineController:
 
         # 2. Modo Selección
         target_seg = self.find_segment_at_ms(click_ms)
-        prev_selected = self.selected_segment_id
         if target_seg:
             self.selected_segment_id = target_seg.get("id")
         else:
             self.selected_segment_id = None
 
-        if prev_selected != self.selected_segment_id:
-            self.cb.get("on_selection_changed", lambda s: None)(self.selected_segment_id)
+        self.cb.get("on_selection_changed", lambda s: None)(self.selected_segment_id)
 
         # Si el clic no fue dentro del eje de la onda, seek directo
         if self.dub_canvas_comp.ax and event.inaxes != self.dub_canvas_comp.ax:
