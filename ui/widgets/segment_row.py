@@ -66,10 +66,12 @@ class SegmentRow(ctk.CTkFrame):
         return float(self.ent_ratio.get().strip())
 
     def set_selected(self, is_selected):
-        self.configure(
-            border_width=2 if is_selected else 0,
-            border_color="#ffe600" if is_selected else "#3d3d3d"
-        )
+        if getattr(self, "_is_selected_state", None) != is_selected:
+            self._is_selected_state = is_selected
+            self.configure(
+                border_width=2 if is_selected else 0,
+                border_color="#ffe600" if is_selected else "#3d3d3d"
+            )
 
     def set_playing(self, is_playing):
         self.btn_play.configure(text="⏹" if is_playing else "▶")

@@ -69,7 +69,7 @@ class PlaybackEngine:
                         except Exception as e:
                             print(f"[PlaybackEngine on_tick error] {e}")
 
-                    time.sleep(0.04)
+                    time.sleep(0.065)
 
                 self.stop()
                 try:

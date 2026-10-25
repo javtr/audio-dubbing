@@ -15,6 +15,8 @@ class AudioProcessor:
         self.original_audio = None
         self.processed_segments = {}
         self.dubbed_audio = None
+        self._dubbed_mix_cache = None
+        self._mix_is_dirty = True
         self.temp_dir = tempfile.mkdtemp()
 
         if self.original_audio_path and os.path.exists(self.original_audio_path):
@@ -77,7 +79,14 @@ class AudioProcessor:
             processed_audio = audio
 
         self.processed_segments[filename] = processed_audio
+        self.mark_mix_dirty()
         return processed_audio, ratio
+
+    def mark_mix_dirty(self):
+        """Invalida la caché de la mezcla cuando los segmentos son alterados."""
+        self._mix_is_dirty = True
+        self._dubbed_mix_cache = None
+        self.dubbed_audio = None
 
     def _apply_atempo(self, input_path, output_path, ratio):
         # Limitar ratio a valores válidos para ffmpeg atempo (0.5 a 100.0)
@@ -108,10 +117,13 @@ class AudioProcessor:
 
         self.mix_dubbed_audio()
 
-    def mix_dubbed_audio(self):
+    def mix_dubbed_audio(self, force=False):
         """Mezcla todos los segmentos doblados disponibles en sus posiciones temporales."""
         if not self.original_audio:
             return None
+
+        if not force and not self._mix_is_dirty and self._dubbed_mix_cache is not None:
+            return self._dubbed_mix_cache
 
         # Base silenciosa con frecuencia de muestreo y canales idénticos al original
         mix = AudioSegment.silent(
@@ -146,7 +158,42 @@ class AudioProcessor:
                 mix = mix.overlay(seg_audio, position=start_ms)
 
         self.dubbed_audio = mix
+        self._dubbed_mix_cache = mix
+        self._mix_is_dirty = False
         return mix
+
+    def get_slice_mix(self, start_ms=0, vol_orig=1.0, mute_orig=False, vol_dub=1.0, mute_dub=False):
+        """Genera un fragmento de mezcla optimizado desde start_ms para reproducción instantánea."""
+        if not self.original_audio:
+            return None
+
+        orig_slice = self.original_audio[start_ms:]
+
+        if mute_orig or vol_orig == 0:
+            final_orig = orig_slice - 100
+        elif vol_orig != 1.0:
+            db_change = 20 * math.log10(vol_orig)
+            final_orig = orig_slice + db_change
+        else:
+            final_orig = orig_slice
+
+        if not self.dubbed_audio or self._mix_is_dirty:
+            self.mix_dubbed_audio()
+
+        if not self.dubbed_audio:
+            return final_orig
+
+        dub_slice = self.dubbed_audio[start_ms:]
+
+        if mute_dub or vol_dub == 0:
+            final_dub = dub_slice - 100
+        elif vol_dub != 1.0:
+            db_change = 20 * math.log10(vol_dub)
+            final_dub = dub_slice + db_change
+        else:
+            final_dub = dub_slice
+
+        return final_orig.overlay(final_dub)
 
     def get_current_mix(self, vol_orig=1.0, mute_orig=False, vol_dub=1.0, mute_dub=False):
         """Genera la mezcla combinada aplicando volumen y silenciamiento."""

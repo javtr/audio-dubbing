@@ -17,6 +17,9 @@ class TimelineCanvas:
         self.playhead_line = None
         self.razor_line = None
         self.ghost_patch = None
+        self._current_cursor = None
+        self.segment_patches = {}
+        self.segment_lines = {}
         
         # Estado de rango visible (Zoom y Pan)
         self.view_start_ms = 0
@@ -65,6 +68,8 @@ class TimelineCanvas:
                     self.ax.axvline(x=sil_s, color='#ef4444', linestyle=':', linewidth=1.2, alpha=0.75, zorder=3)
 
         # 2. Marcas de cortes de cada frase
+        self.segment_patches.clear()
+        self.segment_lines.clear()
         if segments:
             for seg_item in segments:
                 s_ms = seg_item[0]
@@ -74,13 +79,17 @@ class TimelineCanvas:
 
                 if is_selected:
                     # Resaltado amarillo neón para clip seleccionado
-                    self.ax.axvspan(s_ms, e_ms, color='#ffe600', alpha=0.22, zorder=4)
-                    self.ax.axvline(x=s_ms, color='#ffe600', linestyle='-', linewidth=2.0, zorder=7)
-                    self.ax.axvline(x=e_ms, color='#ffe600', linestyle='-', linewidth=2.0, zorder=7)
+                    patch = self.ax.axvspan(s_ms, e_ms, color='#ffe600', alpha=0.22, zorder=4)
+                    l1 = self.ax.axvline(x=s_ms, color='#ffe600', linestyle='-', linewidth=2.0, zorder=7)
+                    l2 = self.ax.axvline(x=e_ms, color='#ffe600', linestyle='-', linewidth=2.0, zorder=7)
                 else:
-                    self.ax.axvspan(s_ms, e_ms, color='white', alpha=0.05, zorder=1)
-                    self.ax.axvline(x=s_ms, color=cut_color, linestyle='--', linewidth=0.85, alpha=0.85, zorder=5)
-                    self.ax.axvline(x=e_ms, color=cut_color, linestyle='--', linewidth=0.85, alpha=0.85, zorder=5)
+                    patch = self.ax.axvspan(s_ms, e_ms, color='white', alpha=0.05, zorder=1)
+                    l1 = self.ax.axvline(x=s_ms, color=cut_color, linestyle='--', linewidth=0.85, alpha=0.85, zorder=5)
+                    l2 = self.ax.axvline(x=e_ms, color=cut_color, linestyle='--', linewidth=0.85, alpha=0.85, zorder=5)
+
+                if seg_id and self.is_dubbed:
+                    self.segment_patches[seg_id] = patch
+                    self.segment_lines[seg_id] = (l1, l2, cut_color)
 
         # 3. Cabezal de reproducción (Playhead)
         self.playhead_line = self.ax.axvline(x=playhead_ms, color='#ffe600', linewidth=1.8, zorder=10)
@@ -153,9 +162,32 @@ class TimelineCanvas:
             if self.canvas:
                 self.canvas.draw_idle()
 
+    def highlight_selected_segment(self, selected_segment_id):
+        """Actualiza el resaltado visual del segmento sin reconstruir la figura (instantáneo a 60fps)."""
+        if not self.ax or not self.canvas:
+            return
+        for seg_id, patch in self.segment_patches.items():
+            is_sel = (seg_id == selected_segment_id)
+            patch.set_facecolor('#ffe600' if is_sel else 'white')
+            patch.set_alpha(0.22 if is_sel else 0.05)
+            patch.set_zorder(4 if is_sel else 1)
+            if seg_id in self.segment_lines:
+                l1, l2, default_cut = self.segment_lines[seg_id]
+                l1.set_color('#ffe600' if is_sel else default_cut)
+                l1.set_linestyle('-' if is_sel else '--')
+                l1.set_linewidth(2.0 if is_sel else 0.85)
+                l2.set_color('#ffe600' if is_sel else default_cut)
+                l2.set_linestyle('-' if is_sel else '--')
+                l2.set_linewidth(2.0 if is_sel else 0.85)
+        self.canvas.draw_idle()
+
     def set_cursor(self, cursor_name):
-        if self.canvas:
-            self.canvas.get_tk_widget().configure(cursor=cursor_name)
+        if self.canvas and self._current_cursor != cursor_name:
+            self._current_cursor = cursor_name
+            try:
+                self.canvas.get_tk_widget().configure(cursor=cursor_name)
+            except Exception:
+                pass
 
     def connect(self, event_name, callback):
         """Conecta un evento de matplotlib (ej. button_press_event) con un callback."""

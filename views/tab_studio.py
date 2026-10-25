@@ -1,3 +1,4 @@
+import threading
 import os
 import math
 import copy
@@ -41,6 +42,7 @@ class TabStudioView(ctk.CTkFrame):
         self.main_scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
         self.main_scroll.grid(row=0, column=0, sticky="nsew", padx=4, pady=(4, 0))
         self.main_scroll.grid_columnconfigure(0, weight=1)
+        self.main_scroll._parent_canvas.configure(yscrollincrement=20)
 
         # 1. ZONA SUPERIOR: FORMAS DE ONDA ALTAS
         wave_frame = ctk.CTkFrame(self.main_scroll)
@@ -276,11 +278,14 @@ class TabStudioView(ctk.CTkFrame):
         self._update_delete_button_state()
         for sid, row in self.segment_rows.items():
             row.set_selected(sid == seg_id)
-        self._update_waveforms()
+        # Resaltado instantáneo sin re-mezclar audio ni reconstruir la figura completa (< 1ms)
+        self.dub_canvas.highlight_selected_segment(seg_id)
 
     def _on_metadata_modified(self):
-        self.app.processor.recalculate_end_times()
-        self.app.pm.save_project_metadata(self.app.current_project, self.app.processor.metadata)
+        if self.app.processor:
+            self.app.processor.mark_mix_dirty()
+            self.app.processor.recalculate_end_times()
+            self.app.pm.save_project_metadata(self.app.current_project, self.app.processor.metadata)
         self.refresh()
         self.app.notify_metadata_updated()
 
@@ -631,45 +636,58 @@ class TabStudioView(ctk.CTkFrame):
     # REPRODUCCIÓN
     # ----------------------------------------------------------
     def _toggle_play_global(self):
-        if not self.app.processor:
+        if not self.app.processor or not self.app.processor.original_audio:
             return
 
         if self.app.playback.is_playing() and self.app.playback.get_playing_id() == "global":
             self.app.playback.stop()
-            self.btn_play_mix.configure(text="▶ Reproducir Mezcla")
+            self.btn_play_mix.configure(text="▶ Reproducir Mezcla", state="normal")
             return
 
-        mix = self.app.processor.get_current_mix(
-            vol_orig=self.slider_vol_orig.get(),
-            mute_orig=self.mute_original,
-            vol_dub=self.slider_vol_dub.get(),
-            mute_dub=self.mute_dubbed
-        )
-        if not mix:
-            return
+        self.btn_play_mix.configure(text="⏳ Cargando...", state="disabled")
 
+        vol_orig = self.slider_vol_orig.get()
+        mute_orig = self.mute_original
+        vol_dub = self.slider_vol_dub.get()
+        mute_dub = self.mute_dubbed
         start_ms = int(self.seek_slider.get())
-        if start_ms >= len(mix):
-            start_ms = 0
-            self.seek_slider.set(0)
 
-        audio_slice = mix[start_ms:]
-        self.btn_play_mix.configure(text="⏹ Detener")
+        def _prep_and_play():
+            try:
+                audio_slice = self.app.processor.get_slice_mix(
+                    start_ms=start_ms,
+                    vol_orig=vol_orig,
+                    mute_orig=mute_orig,
+                    vol_dub=vol_dub,
+                    mute_dub=mute_dub
+                )
+                if not audio_slice:
+                    self.app.run_on_ui_thread(lambda: self.btn_play_mix.configure(text="▶ Reproducir Mezcla", state="normal"))
+                    return
 
-        def _on_tick(elapsed):
-            if not self.is_dragging and elapsed <= self.total_duration_ms:
-                self.app.run_on_ui_thread(lambda: self._sync_playback_ui(elapsed))
+                def _start_gui():
+                    self.btn_play_mix.configure(text="⏹ Detener", state="normal")
 
-        def _on_finished():
-            self.app.run_on_ui_thread(lambda: self._reset_playback_ui())
+                def _on_tick(elapsed):
+                    if not self.is_dragging and elapsed <= self.total_duration_ms:
+                        self.app.run_on_ui_thread(lambda: self._sync_playback_ui(elapsed))
 
-        self.app.playback.play_audio(
-            audio_slice,
-            play_id="global",
-            start_offset=start_ms,
-            on_tick=_on_tick,
-            on_finished=_on_finished
-        )
+                def _on_finished():
+                    self.app.run_on_ui_thread(lambda: self._reset_playback_ui())
+
+                self.app.run_on_ui_thread(_start_gui)
+                self.app.playback.play_audio(
+                    audio_slice,
+                    play_id="global",
+                    start_offset=start_ms,
+                    on_tick=_on_tick,
+                    on_finished=_on_finished
+                )
+            except Exception as e:
+                print(f"[ERROR] Error al reproducir mezcla: {e}")
+                self.app.run_on_ui_thread(lambda: self.btn_play_mix.configure(text="▶ Reproducir Mezcla", state="normal"))
+
+        threading.Thread(target=_prep_and_play, daemon=True).start()
 
     def _sync_playback_ui(self, elapsed):
         self.seek_slider.set(elapsed)

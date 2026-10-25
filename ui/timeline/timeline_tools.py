@@ -1,3 +1,4 @@
+import time
 import os
 import copy
 from pydub import AudioSegment
@@ -29,6 +30,25 @@ class TimelineController:
         self.orig_clip_raw_duration = 0
         self.drag_has_moved = False
         self.current_silences = []
+
+        # Control de rendimiento (Throttling y State Diffing)
+        self._last_motion_time = 0.0
+        self._last_dub_hover_text = None
+        self._last_dub_hover_color = None
+        self._last_orig_hover_text = None
+        self._last_orig_hover_color = None
+
+    def _emit_hover_dub(self, text, color):
+        if text != self._last_dub_hover_text or color != self._last_dub_hover_color:
+            self._last_dub_hover_text = text
+            self._last_dub_hover_color = color
+            self.cb.get("on_hover_dub", lambda t, c: None)(text, color)
+
+    def _emit_hover_orig(self, text, color):
+        if text != self._last_orig_hover_text or color != self._last_orig_hover_color:
+            self._last_orig_hover_text = text
+            self._last_orig_hover_color = color
+            self.cb.get("on_hover_orig", lambda t, c: None)(text, color)
 
     def set_silences(self, silences):
         """Almacena los intervalos de silencio muerto calculados para interacción por cursor."""
@@ -64,6 +84,12 @@ class TimelineController:
     # EVENTOS PISTA DOBLADA (DUB CANVAS)
     # ----------------------------------------------------------
     def on_timeline_motion(self, event):
+        now = time.time()
+        # Throttling a ~28 FPS (35ms) para evitar congelar el bucle de eventos de Tkinter
+        if (now - self._last_motion_time) < 0.035 and self.drag_mode is None:
+            return
+        self._last_motion_time = now
+
         processor = self.get_processor()
         if not processor or not processor.metadata:
             return
@@ -81,11 +107,11 @@ class TimelineController:
 
             target_seg = self.find_segment_at_ms(cut_ms)
             if target_seg:
-                self.cb.get("on_hover_dub", lambda t, c: None)(
+                self._emit_hover_dub(
                     f"✂️ Cuchilla en {cut_ms} ms | Clic para dividir [{target_seg.get('id', '')}]", "#ff5252"
                 )
             else:
-                self.cb.get("on_hover_dub", lambda t, c: None)(
+                self._emit_hover_dub(
                     f"✂️ Cuchilla en {cut_ms} ms (fuera de segmento)", "#ffb74d"
                 )
             return
@@ -109,7 +135,7 @@ class TimelineController:
                     new_start = max(0, new_end - dur)
 
                 self.dub_canvas_comp.set_ghost_patch(new_start, new_end, color='#00e5ff', alpha=0.35)
-                self.cb.get("on_hover_dub", lambda t, c: None)(
+                self._emit_hover_dub(
                     f"↔️ Moviendo [{self.drag_seg_id}]: {int(new_start)} ms → {int(new_end)} ms (duración: {int(dur)} ms)", "#00e5ff"
                 )
                 self.cb.get("on_time_label_update", lambda t: None)(f"{int(new_start)} ms / {int(tot_duration)} ms")
@@ -124,7 +150,7 @@ class TimelineController:
                 ratio = max(0.5, min(ratio, 5.0))
 
                 self.dub_canvas_comp.set_ghost_patch(self.orig_seg_start, new_end, color='#ffc107', alpha=0.35)
-                self.cb.get("on_hover_dub", lambda t, c: None)(
+                self._emit_hover_dub(
                     f"↔️ Ajustando [{self.drag_seg_id}]: Fin {int(new_end)} ms | Duración: {int(target_dur)} ms (Ratio {ratio:.2f}x)", "#ffc107"
                 )
                 self.cb.get("on_time_label_update", lambda t: None)(f"{int(new_end)} ms / {int(tot_duration)} ms")
@@ -134,7 +160,7 @@ class TimelineController:
         # CASO 2: Hover normal
         if event.xdata is None:
             self.dub_canvas_comp.set_cursor("")
-            self.cb.get("on_hover_dub", lambda t, c: None)(
+            self._emit_hover_dub(
                 "Pasa el cursor sobre la onda doblada para inspeccionar el texto...", "#64748b"
             )
             return
@@ -166,12 +192,12 @@ class TimelineController:
 
         self.dub_canvas_comp.set_cursor(cursor_type)
         if silence_hit:
-            self.cb.get("on_hover_dub", lambda t, c: None)(silence_hit, "#ff5252")
+            self._emit_hover_dub(silence_hit, "#ff5252")
         elif hovered_text:
-            self.cb.get("on_hover_dub", lambda t, c: None)(hovered_text, "#ffb74d")
+            self._emit_hover_dub(hovered_text, "#ffb74d")
         else:
-            self.cb.get("on_hover_dub", lambda t, c: None)(
-                f"📍 Posición: {int(event.xdata)} ms (silencio / espacio libre)", "#64748b"
+            self._emit_hover_dub(
+                "Pasa el cursor sobre la onda doblada para inspeccionar el texto...", "#64748b"
             )
 
     def on_timeline_press(self, event):
@@ -304,19 +330,16 @@ class TimelineController:
             self.cb.get("on_metadata_modified", lambda: None)()
 
     def on_timeline_leave(self, event):
-        if self.drag_mode is None:
-            if self.active_tool == "RAZOR":
-                self.dub_canvas_comp.set_cursor("crosshair")
-            else:
-                self.dub_canvas_comp.set_cursor("")
-        self.dub_canvas_comp.remove_razor_guide()
-
+        if self.dub_canvas_comp:
+            self.dub_canvas_comp.remove_razor_guide()
+            self.dub_canvas_comp.remove_ghost_patch()
+            self.dub_canvas_comp.set_cursor("")
         if self.active_tool == "RAZOR":
-            self.cb.get("on_hover_dub", lambda t, c: None)(
+            self._emit_hover_dub(
                 "✂️ Modo Cuchilla activo: Haz clic sobre la onda doblada para dividir el audio", "#ff5252"
             )
         else:
-            self.cb.get("on_hover_dub", lambda t, c: None)(
+            self._emit_hover_dub(
                 "Pasa el cursor sobre la onda doblada para inspeccionar el texto...", "#64748b"
             )
 
@@ -324,11 +347,17 @@ class TimelineController:
     # EVENTOS PISTA ORIGINAL (ORIG CANVAS)
     # ----------------------------------------------------------
     def on_orig_motion(self, event):
+        now = time.time()
+        # Throttling a ~28 FPS
+        if (now - self._last_motion_time) < 0.035:
+            return
+        self._last_motion_time = now
+
         processor = self.get_processor()
         if not processor or not processor.metadata:
             return
         if event.xdata is None:
-            self.cb.get("on_hover_orig", lambda t, c: None)(
+            self._emit_hover_orig(
                 "Pasa el cursor sobre la onda para inspeccionar el texto...", "#64748b"
             )
             return
@@ -348,20 +377,17 @@ class TimelineController:
                 break
 
         if hovered_text:
-            self.cb.get("on_hover_orig", lambda t, c: None)(hovered_text, "#38bdf8")
+            self._emit_hover_orig(hovered_text, "#38bdf8")
         else:
-            self.cb.get("on_hover_orig", lambda t, c: None)(
-                f"📍 Posición: {int(x)} ms (silencio / fuera de frase)", "#64748b"
+            self._emit_hover_orig(
+                "Pasa el cursor sobre la onda para inspeccionar el texto...", "#64748b"
             )
 
     def on_orig_leave(self, event):
-        self.cb.get("on_hover_orig", lambda t, c: None)(
+        self._emit_hover_orig(
             "Pasa el cursor sobre la onda para inspeccionar el texto...", "#64748b"
         )
 
-    # ----------------------------------------------------------
-    # OPERACIONES DE CORTE Y SUPRESIÓN
-    # ----------------------------------------------------------
     def split_segment(self, segment, cut_ms):
         """Divide el segmento en el punto de corte exacto en milisegundos."""
         processor = self.get_processor()
