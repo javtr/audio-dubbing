@@ -21,6 +21,9 @@ class AudioProcessor:
             self.original_audio = AudioSegment.from_file(self.original_audio_path)
             self.recalculate_end_times()
 
+        if self.audios_dir and os.path.exists(self.audios_dir):
+            self.preload_segments()
+
     def recalculate_end_times(self):
         """Asegura orden cronológico y calcula end_ms solo si no está definido o es inválido."""
         if not self.metadata or self.original_audio is None:
@@ -65,8 +68,10 @@ class AudioProcessor:
             ratio = actual_duration / target_duration
 
         if ratio != 1.0:
-            out_path = os.path.join(self.temp_dir, f"stretched_{filename}")
-            self._apply_atempo(filepath, out_path, ratio)
+            out_name = f"stretched_{ratio:.3f}_{filename}"
+            out_path = os.path.join(self.temp_dir, out_name)
+            if not os.path.exists(out_path) or os.path.getmtime(out_path) < os.path.getmtime(filepath):
+                self._apply_atempo(filepath, out_path, ratio)
             processed_audio = AudioSegment.from_file(out_path)
         else:
             processed_audio = audio
@@ -84,17 +89,60 @@ class AudioProcessor:
         ]
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
 
+    def preload_segments(self, audios_dir=None):
+        """Precarga y procesa todos los segmentos cuyos audios existan en el directorio del proyecto."""
+        if audios_dir:
+            self.audios_dir = audios_dir
+        if not self.audios_dir or not os.path.exists(self.audios_dir):
+            return
+
+        for seg in self.metadata:
+            fname = seg.get("filename")
+            if fname:
+                fpath = os.path.join(self.audios_dir, fname)
+                if os.path.exists(fpath):
+                    try:
+                        self.process_segment(seg)
+                    except Exception as e:
+                        print(f"[WARN] Error precargando segmento {fname}: {e}")
+
+        self.mix_dubbed_audio()
+
     def mix_dubbed_audio(self):
         """Mezcla todos los segmentos doblados disponibles en sus posiciones temporales."""
         if not self.original_audio:
             return None
 
-        mix = AudioSegment.silent(duration=len(self.original_audio))
+        # Base silenciosa con frecuencia de muestreo y canales idénticos al original
+        mix = AudioSegment.silent(
+            duration=len(self.original_audio),
+            frame_rate=self.original_audio.frame_rate
+        ).set_channels(self.original_audio.channels)
+
         for seg in self.metadata:
             filename = seg.get("filename")
+            if not filename:
+                continue
+
+            # Autocarga si el archivo existe en disco y aún no está en memoria procesado
+            if filename not in self.processed_segments:
+                fpath = os.path.join(self.audios_dir, filename) if self.audios_dir else ""
+                if fpath and os.path.exists(fpath):
+                    try:
+                        self.process_segment(seg)
+                    except Exception as e:
+                        print(f"[WARN] Error cargando segmento en mix {filename}: {e}")
+
             if filename in self.processed_segments:
                 seg_audio = self.processed_segments[filename]
                 start_ms = seg.get("start_ms", 0)
+
+                # Homogeneizar frecuencia de muestreo y canales antes del overlay
+                if seg_audio.frame_rate != mix.frame_rate:
+                    seg_audio = seg_audio.set_frame_rate(mix.frame_rate)
+                if seg_audio.channels != mix.channels:
+                    seg_audio = seg_audio.set_channels(mix.channels)
+
                 mix = mix.overlay(seg_audio, position=start_ms)
 
         self.dubbed_audio = mix

@@ -132,6 +132,8 @@ class AudioDubbingStudio(ctk.CTk):
         current_tab = self.tabview.get()
         if current_tab in ["2. Doblaje (Pinokio)", "3. Estudio y Mezcla"]:
             self.aligner.unload_model()
+        if current_tab == "3. Estudio y Mezcla":
+            self.view_studio.refresh()
 
     def _show_new_project_dialog(self):
         NewProjectDialog(self, self._create_new_project)

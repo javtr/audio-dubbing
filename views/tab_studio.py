@@ -441,10 +441,10 @@ class TabStudioView(ctk.CTkFrame):
             segments=orig_segs_info, selected_segment_id=None, playhead_ms=cur_pos,
             view_range=cur_view_range
         )
+        self._bind_mousewheel_zoom(self.orig_canvas)
         self.orig_canvas.connect('button_press_event', self._on_orig_click)
         self.orig_canvas.connect('motion_notify_event', self.timeline_ctrl.on_orig_motion)
         self.orig_canvas.connect('figure_leave_event', self.timeline_ctrl.on_orig_leave)
-        self.orig_canvas.connect('scroll_event', self._on_canvas_scroll)
 
         # Dibujar Onda Doblada
         mix_data = self.app.processor.get_waveform_data(mix)
@@ -454,11 +454,11 @@ class TabStudioView(ctk.CTkFrame):
             selected_segment_id=self.timeline_ctrl.selected_segment_id, playhead_ms=cur_pos,
             view_range=cur_view_range
         )
+        self._bind_mousewheel_zoom(self.dub_canvas)
         self.dub_canvas.connect('button_press_event', self.timeline_ctrl.on_timeline_press)
         self.dub_canvas.connect('motion_notify_event', self.timeline_ctrl.on_timeline_motion)
         self.dub_canvas.connect('button_release_event', self.timeline_ctrl.on_timeline_release)
         self.dub_canvas.connect('figure_leave_event', self.timeline_ctrl.on_timeline_leave)
-        self.dub_canvas.connect('scroll_event', self._on_canvas_scroll)
 
         self.timeline_ctrl.set_silences(dub_silences)
 
@@ -556,6 +556,46 @@ class TabStudioView(ctk.CTkFrame):
         max_offset = max(0, self.total_duration_ms - vis_span)
         self.view_offset_ms = (float(val) / 100.0) * max_offset
         self._apply_zoom_and_scroll()
+
+    def _bind_mousewheel_zoom(self, canvas_comp):
+        """Vincula el zoom de rueda directamente al widget Tkinter del canvas para evitar scroll vertical en la ventana."""
+        if not canvas_comp or not hasattr(canvas_comp, "canvas") or not canvas_comp.canvas:
+            return
+        tk_w = canvas_comp.canvas.get_tk_widget()
+        if not tk_w:
+            return
+
+        def _on_wheel(event):
+            w_width = max(1, tk_w.winfo_width())
+            vis_span = self.total_duration_ms / max(1.0, self.zoom_level)
+            frac = max(0.0, min(1.0, event.x / float(w_width)))
+            cursor_ms = self.view_offset_ms + (frac * vis_span)
+
+            if event.delta > 0:
+                self._on_zoom_in(target_center_ms=cursor_ms)
+            elif event.delta < 0:
+                self._on_zoom_out(target_center_ms=cursor_ms)
+            return "break"
+
+        def _on_wheel_up(event):
+            w_width = max(1, tk_w.winfo_width())
+            vis_span = self.total_duration_ms / max(1.0, self.zoom_level)
+            frac = max(0.0, min(1.0, event.x / float(w_width)))
+            cursor_ms = self.view_offset_ms + (frac * vis_span)
+            self._on_zoom_in(target_center_ms=cursor_ms)
+            return "break"
+
+        def _on_wheel_down(event):
+            w_width = max(1, tk_w.winfo_width())
+            vis_span = self.total_duration_ms / max(1.0, self.zoom_level)
+            frac = max(0.0, min(1.0, event.x / float(w_width)))
+            cursor_ms = self.view_offset_ms + (frac * vis_span)
+            self._on_zoom_out(target_center_ms=cursor_ms)
+            return "break"
+
+        tk_w.bind("<MouseWheel>", _on_wheel)
+        tk_w.bind("<Button-4>", _on_wheel_up)
+        tk_w.bind("<Button-5>", _on_wheel_down)
 
     def _on_canvas_scroll(self, event):
         if event.xdata is None:

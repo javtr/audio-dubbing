@@ -37,10 +37,12 @@ class TimelineCanvas:
         n = len(samples) if samples is not None else 0
         if n > 0:
             x_coords = np.linspace(0, total_duration_ms, n)
-            self.ax.plot(x_coords, samples, color=color, linewidth=0.75)
+            self.ax.plot(x_coords, samples, color=color, linewidth=0.85, zorder=6)
             max_val = max(abs(float(samples.max())), abs(float(samples.min()))) if n > 0 else 1.0
             if max_val > 0:
                 self.ax.set_ylim(-max_val * 1.15, max_val * 1.15)
+            else:
+                self.ax.set_ylim(-1.0, 1.0)
 
         # Aplicar rango visible (Zoom / Scroll)
         if view_range is not None:
