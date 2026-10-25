@@ -1,5 +1,6 @@
 import threading
 import os
+import re
 import math
 import copy
 from tkinter import filedialog, messagebox
@@ -395,12 +396,37 @@ class TabStudioView(ctk.CTkFrame):
 
         return None
 
+    def _find_acoustic_split_point(self, audio, approx_cut_ms, window_ms=600):
+        """Encuentra el punto de menor energía (silencio/respiración) cerca de la coma."""
+        total_len = len(audio)
+        if total_len <= 100:
+            return max(1, total_len // 2)
+
+        start_search = max(50, approx_cut_ms - window_ms)
+        end_search = min(total_len - 50, approx_cut_ms + window_ms)
+
+        if start_search >= end_search:
+            return max(1, min(total_len - 1, approx_cut_ms))
+
+        best_ms = approx_cut_ms
+        min_rms = float('inf')
+        step = 25
+
+        for t in range(start_search, end_search, step):
+            chunk = audio[t : min(total_len, t + 40)]
+            rms = chunk.rms
+            if rms < min_rms:
+                min_rms = rms
+                best_ms = t
+
+        return max(1, min(total_len - 1, best_ms))
+
     def _auto_split_selected_segment(self):
         seg_id = self.timeline_ctrl.selected_segment_id
         if not seg_id or not self.app.processor or not self.app.processor.metadata:
             return
 
-        seg = next((s for s in self.app.processor.metadata if s.get('id') == seg_id), None)
+        seg = next((s for s in self.app.processor.metadata if str(s.get('id')) == str(seg_id)), None)
         if not seg:
             return
 
@@ -430,83 +456,121 @@ class TabStudioView(ctk.CTkFrame):
             part1_es = " ".join(words_es[:half_w])
             part2_es = " ".join(words_es[half_w:])
 
-        # 2. Calcular silencio muerto y repartir equitativamente (50% en medio y 50% al final)
+        # 2. Cargar audio existente y realizar corte acústico real
+        audios_dir = self.app.project_paths.get("audios_dir") if self.app.project_paths else None
+        fname = seg.get('filename', '')
+        fpath = os.path.join(audios_dir, fname) if audios_dir and fname else None
+
+        if not fpath or not os.path.isfile(fpath):
+            messagebox.showwarning(
+                "Audio no encontrado",
+                f"No se encontró el archivo de audio '{fname}' en disco.\nGenera primero el audio en la pestaña de Doblaje."
+            )
+            return
+
+        try:
+            full_audio = AudioSegment.from_file(fpath)
+        except Exception as e:
+            messagebox.showerror("Error al cargar audio", f"No se pudo leer el archivo de audio: {e}")
+            return
+
+        total_audio_len = len(full_audio)
+        if total_audio_len <= 50:
+            messagebox.showwarning("Audio muy corto", "El audio de este segmento es demasiado breve para ser dividido.")
+            return
+
+        words_p1 = max(1, len(part1_en.split()))
+        words_p2 = max(1, len(part2_en.split()))
+        words_ratio = words_p1 / (words_p1 + words_p2)
+
+        approx_cut_ms = int(total_audio_len * words_ratio)
+        acoustic_cut_ms = self._find_acoustic_split_point(full_audio, approx_cut_ms, window_ms=600)
+
+        part1_audio = full_audio[:acoustic_cut_ms]
+        part2_audio = full_audio[acoustic_cut_ms:]
+
+        dur_1 = len(part1_audio)
+        dur_2 = len(part2_audio)
+
+        # 3. Nombres y rutas para los nuevos archivos de audio
+        base_name = os.path.splitext(fname)[0]
+        clean_base = re.sub(r'_[ab]$', '', base_name)
+        name_a = f"{clean_base}_a.wav"
+        name_b = f"{clean_base}_b.wav"
+        path_a = os.path.join(audios_dir, name_a)
+        path_b = os.path.join(audios_dir, name_b)
+
+        # Exportar archivos físicos
+        try:
+            part1_audio.export(path_a, format="wav")
+            part2_audio.export(path_b, format="wav")
+        except Exception as e:
+            messagebox.showerror("Error al exportar", f"Fallo al guardar los fragmentos de audio cortados: {e}")
+            return
+
+        # Registrar en el caché de audio en memoria
+        self.app.processor.processed_segments[name_a] = part1_audio
+        self.app.processor.processed_segments[name_b] = part2_audio
+
+        # 4. Cálculo de tiempos y reparto equitativo del silencio (50% en medio y 50% al final)
         start_ms = seg.get('start_ms', 0)
         end_ms = seg.get('end_ms', 0)
         total_span = end_ms - start_ms
 
-        audios_dir = self.app.project_paths.get("audios_dir") if self.app.project_paths else None
-        fname = seg.get('filename', '')
-        fpath = os.path.join(audios_dir, fname) if audios_dir and fname else None
-        voice_dur = 0
-        if fpath and os.path.isfile(fpath):
-            try:
-                voice_dur = len(AudioSegment.from_file(fpath))
-            except Exception:
-                voice_dur = 0
-
-        if voice_dur <= 0 or voice_dur >= total_span:
-            silences = getattr(self.timeline_ctrl, "current_silences", []) or getattr(self.timeline_ctrl, "silences", [])
-            for sil in silences:
-                if str(sil[2]) == str(seg_id):
-                    voice_dur = int(total_span - (sil[3] * 1000))
-                    break
-        if voice_dur <= 0 or voice_dur >= total_span:
-            voice_dur = total_span // 2
-
-        dead_air = max(0, total_span - voice_dur)
-        # Reparto equitativo: 50% de pausa intermedia y 50% de pausa final
+        dead_air = max(0, total_span - (dur_1 + dur_2))
         pause_mid = dead_air // 2
         pause_end = dead_air - pause_mid
 
-        words_p1 = max(1, len(part1_en.split()))
-        words_p2 = max(1, len(part2_en.split()))
-        ratio_p1 = words_p1 / (words_p1 + words_p2)
-
-        dur_voice_p1 = int(voice_dur * ratio_p1)
-        dur_voice_p2 = voice_dur - dur_voice_p1
-
-        # Tiempos resultantes
+        # Frase A: Inicia en start_ms y termina exactamente al terminar su voz (ratio = 1.00x)
         start_1 = start_ms
-        end_1 = start_1 + dur_voice_p1
+        end_1 = start_1 + dur_1
 
+        # Frase B: Inicia tras la pausa intermedia y termina en end_ms
         start_2 = end_1 + pause_mid
-        end_2 = end_ms # start_2 + dur_voice_p2 + pause_end == end_ms
+        end_2 = end_ms
 
-        # 3. Crear los dos sub-segmentos en los metadatos
+        # 5. Generar IDs únicos y actualizar metadatos
+        clean_seg_id = re.sub(r'_[ab]$', '', str(seg_id))
+        id_a = f"{clean_seg_id}_a"
+        id_b = f"{clean_seg_id}_b"
+
         idx = self.app.processor.metadata.index(seg)
-        seg1 = copy.deepcopy(seg)
-        seg1['translated'] = part1_en
-        seg1['original'] = part1_es
-        seg1['end_ms'] = end_1
 
-        all_ids = [str(s.get('id')) for s in self.app.processor.metadata]
-        new_id = f"{seg_id}.1"
-        c = 1
-        while new_id in all_ids:
-            c += 1
-            new_id = f"{seg_id}.{c}"
+        seg_a = copy.deepcopy(seg)
+        seg_a['id'] = id_a
+        seg_a['filename'] = name_a
+        seg_a['translated'] = part1_en
+        seg_a['original'] = part1_es
+        seg_a['start_ms'] = start_1
+        seg_a['end_ms'] = end_1
 
-        seg2 = copy.deepcopy(seg)
-        seg2['id'] = new_id
-        seg2['filename'] = f"seg_{new_id}.wav"
-        seg2['translated'] = part2_en
-        seg2['original'] = part2_es
-        seg2['start_ms'] = start_2
-        seg2['end_ms'] = end_2
+        seg_b = copy.deepcopy(seg)
+        seg_b['id'] = id_b
+        seg_b['filename'] = name_b
+        seg_b['translated'] = part2_en
+        seg_b['original'] = part2_es
+        seg_b['start_ms'] = start_2
+        seg_b['end_ms'] = end_2
 
-        self.app.processor.metadata[idx] = seg1
-        self.app.processor.metadata.insert(idx + 1, seg2)
+        self.app.processor.metadata[idx] = seg_a
+        self.app.processor.metadata.insert(idx + 1, seg_b)
 
+        # Invalida la caché de mezcla y refresca la UI
         self._on_metadata_modified()
+
+        # Seleccionar la primera parte para mantener feedback visual activo
+        self.timeline_ctrl.selected_segment_id = id_a
+        self._update_delete_button_state()
+        self.dub_canvas.highlight_selected_segment(id_a)
+
         messagebox.showinfo(
             "Auto-División Exitosa",
-            f"El segmento [{seg_id}] fue dividido en 2 frases por la coma central.\n\n"
-            f"• Frase 1: {start_1} ms a {end_1} ms\n"
+            f"El segmento [{seg_id}] fue dividido físicamente en 2 frases y 2 audios:\n\n"
+            f"• Frase A [{id_a}] ({dur_1/1000.0:.1f}s): {start_1} ms a {end_1} ms (Velocidad natural 1.00x)\n"
             f"• Pausa intermedia: {pause_mid / 1000.0:.1f}s\n"
-            f"• Frase 2: {start_2} ms a {end_2} ms (Silencio final: {pause_end / 1000.0:.1f}s)\n\n"
-            "El silencio muerto fue repartido equitativamente (50% en medio y 50% al final).\n"
-            "Ve a la pestaña de Doblaje para generar los nuevos audios correspondientes."
+            f"• Frase B [{id_b}] ({dur_2/1000.0:.1f}s): {start_2} ms a {end_2} ms (Velocidad natural 1.00x)\n"
+            f"• Silencio final: {pause_end / 1000.0:.1f}s\n\n"
+            "El audio ha sido cortado y sincronizado al instante en la línea de tiempo."
         )
 
     def refresh(self):
