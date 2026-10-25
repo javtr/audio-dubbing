@@ -1,3 +1,4 @@
+import copy
 import gc
 import re
 import unicodedata
@@ -199,7 +200,103 @@ Devuelve ÚNICAMENTE un bloque de código JSON válido con esta estructura exact
 """
         return prompt
 
-    def align_timestamps(self, audio_path, gemini_data, callback_status=None):
+    def _split_segment_text(self, seg, ratio):
+        orig_text = seg.get("original", "").strip()
+        trans_text = seg.get("translated", "").strip()
+
+        # 1. Dividir texto en español (original)
+        words_es = orig_text.split()
+        target_idx_es = max(3, min(len(words_es) - 4, int(round(len(words_es) * ratio)) - 1))
+
+        best_es = target_idx_es
+        for off in range(4):
+            for candidate in [target_idx_es + off, target_idx_es - off]:
+                if 2 <= candidate < len(words_es) - 3:
+                    w = words_es[candidate]
+                    if w.endswith((',', ';', ':', '.')):
+                        best_es = candidate
+                        break
+            else:
+                continue
+            break
+
+        part1_es = " ".join(words_es[:best_es + 1]).strip()
+        part2_es = " ".join(words_es[best_es + 1:]).strip()
+
+        # 2. Dividir texto traducido (inglés o portugués)
+        words_tr = trans_text.split()
+        actual_ratio = len(part1_es.split()) / float(max(1, len(words_es)))
+        target_idx_tr = max(3, min(len(words_tr) - 4, int(round(len(words_tr) * actual_ratio)) - 1))
+
+        best_tr = target_idx_tr
+        connectors = {"and", "but", "so", "because", "which", "while", "that", "e", "mas", "para", "entonces"}
+        for off in range(4):
+            for cand in [target_idx_tr + off, target_idx_tr - off]:
+                if 2 <= cand < len(words_tr) - 3:
+                    w = words_tr[cand]
+                    if w.endswith((',', ';', ':', '.')) or (cand + 1 < len(words_tr) and words_tr[cand + 1].lower() in connectors):
+                        best_tr = cand
+                        break
+            else:
+                continue
+            break
+
+        part1_tr = " ".join(words_tr[:best_tr + 1]).strip()
+        part2_tr = " ".join(words_tr[best_tr + 1:]).strip()
+
+        return part1_es, part2_es, part1_tr, part2_tr
+
+    def _split_segment_by_acoustic_pauses(self, seg, start_w_idx, end_w_idx, whisper_words, min_pause_ms=1000):
+        sub_words = whisper_words[start_w_idx:end_w_idx]
+        if len(sub_words) < 10:
+            seg["_sub_words"] = sub_words
+            return [seg]
+
+        pauses = []
+        for k in range(3, len(sub_words) - 4):
+            w_curr = sub_words[k]
+            w_next = sub_words[k + 1]
+            gap = w_next["start_ms"] - w_curr["end_ms"]
+            if gap >= min_pause_ms:
+                pauses.append((k, gap, w_curr, w_next))
+
+        if not pauses:
+            seg["_sub_words"] = sub_words
+            return [seg]
+
+        mid_idx = len(sub_words) // 2
+        best_pause = max(pauses, key=lambda p: (p[1] - abs(p[0] - mid_idx) * 20))
+        k, gap, w_curr, w_next = best_pause
+
+        ratio = (k + 1) / float(len(sub_words))
+        part1_es, part2_es, part1_tr, part2_tr = self._split_segment_text(seg, ratio)
+
+        start_1 = seg["start_ms"]
+        end_1 = w_curr["end_ms"] + 150
+        start_2 = w_next["start_ms"]
+        end_2 = seg.get("end_ms", w_next["start_ms"] + 2000)
+
+        base_id = str(seg.get("id", "seg"))
+
+        seg_a = copy.deepcopy(seg)
+        seg_a["id"] = f"{base_id}_a"
+        seg_a["original"] = part1_es
+        seg_a["translated"] = part1_tr
+        seg_a["start_ms"] = start_1
+        seg_a["end_ms"] = end_1
+        seg_a["_sub_words"] = sub_words[:k + 1]
+
+        seg_b = copy.deepcopy(seg)
+        seg_b["id"] = f"{base_id}_b"
+        seg_b["original"] = part2_es
+        seg_b["translated"] = part2_tr
+        seg_b["start_ms"] = start_2
+        seg_b["end_ms"] = end_2
+        seg_b["_sub_words"] = sub_words[k + 1:]
+
+        return [seg_a, seg_b]
+
+    def align_timestamps(self, audio_path, gemini_data, callback_status=None, split_on_pauses=True, min_pause_ms=1000):
         """
         Alinea el JSON de Gemini con los timestamps reales por palabra usando Whisper.
         Utiliza un motor de alineación global en 3 capas (Global Token Matching con SequenceMatcher,
@@ -225,6 +322,7 @@ Devuelve ÚNICAMENTE un bloque de código JSON válido con esta estructura exact
                     if clean_word:
                         whisper_words.append({
                             "word": clean_word,
+                            "raw_word": word.word.strip(),
                             "start_ms": int(word.start * 1000),
                             "end_ms": int(word.end * 1000)
                         })
@@ -337,22 +435,52 @@ Devuelve ÚNICAMENTE un bloque de código JSON válido con esta estructura exact
 
                 gemini_data[seg_idx]["start_ms"] = start_ms
                 gemini_data[seg_idx]["orig_start_ms"] = start_ms
+                gemini_data[seg_idx]["_w_idx"] = best_start_idx
                 last_confirmed_w_idx = best_start_idx
 
-            # Asignar end_ms basándose en el inicio del siguiente segmento (sin solapamientos)
+            # CAPA 4: Subdivisión acústica por pausas internas (si está activado)
+            if split_on_pauses and total_whisper_words > 0:
+                if callback_status:
+                    callback_status("Detectando silencios acústicos y auto-subdividiendo frases...")
+                expanded_data = []
+                for i in range(len(gemini_data)):
+                    seg = gemini_data[i]
+                    w_start = seg.get("_w_idx", 0)
+                    w_end = gemini_data[i + 1].get("_w_idx", total_whisper_words) if i + 1 < len(gemini_data) else total_whisper_words
+                    sub_segs = self._split_segment_by_acoustic_pauses(seg, w_start, w_end, whisper_words, min_pause_ms=min_pause_ms)
+                    expanded_data.extend(sub_segs)
+                gemini_data = expanded_data
+
+            # CAPA 5: Asignación de end_ms acústico real (evita absorber silencios muertos posteriores)
             for i in range(len(gemini_data)):
-                if i < len(gemini_data) - 1:
-                    next_start = gemini_data[i + 1].get("start_ms")
-                    gemini_data[i]["end_ms"] = next_start if next_start is not None else audio_duration_ms
+                seg_i = gemini_data[i]
+                sw = seg_i.get("_sub_words", [])
+                if sw:
+                    actual_voice_end = sw[-1]["end_ms"]
                 else:
-                    gemini_data[i]["end_ms"] = audio_duration_ms
+                    actual_voice_end = seg_i.get("end_ms", seg_i.get("start_ms", 0) + 1000)
 
-                # Guardar ancla de fin original fija
-                gemini_data[i]["orig_end_ms"] = gemini_data[i]["end_ms"]
+                next_start = gemini_data[i + 1].get("start_ms") if i + 1 < len(gemini_data) else audio_duration_ms
+                trailing_silence = next_start - actual_voice_end
 
-                # Asegurar nombre de archivo
-                if "filename" not in gemini_data[i] or not gemini_data[i]["filename"]:
-                    gemini_data[i]["filename"] = f"segment_{i:03d}.wav"
+                if trailing_silence >= 1200:
+                    # El orador terminó de hablar: dejar el silencio libre en la pista en vez de hinchar el slot
+                    seg_i["end_ms"] = min(next_start, actual_voice_end + 250)
+                else:
+                    seg_i["end_ms"] = next_start
+
+                # Asegurar duración mínima de 300ms
+                if seg_i["end_ms"] <= seg_i["start_ms"]:
+                    seg_i["end_ms"] = seg_i["start_ms"] + 300
+
+                # Guardar anclas de inicio y fin originales
+                seg_i["orig_start_ms"] = seg_i["start_ms"]
+                seg_i["orig_end_ms"] = seg_i["end_ms"]
+                seg_i["filename"] = f"segment_{i:03d}.wav"
+
+                # Limpieza de campos temporales internos
+                seg_i.pop("_w_idx", None)
+                seg_i.pop("_sub_words", None)
 
             return gemini_data, audio_duration_ms
         finally:

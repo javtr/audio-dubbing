@@ -79,6 +79,17 @@ class TabScriptView(ctk.CTkFrame):
         )
         self.btn_align.pack(side="left", padx=5)
 
+        self.chk_split_pauses = ctk.CTkCheckBox(
+            json_btn_bar,
+            text="✂️ Auto-dividir por pausas (≥ 1.0s)",
+            font=("Arial", 11, "bold"),
+            text_color="#38bdf8",
+            checkbox_width=18,
+            checkbox_height=18
+        )
+        self.chk_split_pauses.select()
+        self.chk_split_pauses.pack(side="left", padx=10)
+
         self.txt_json = ctk.CTkTextbox(right_frame, font=("Consolas", 12))
         self.txt_json.grid(row=2, column=0, padx=15, pady=10, sticky="nsew")
 
@@ -201,10 +212,13 @@ class TabScriptView(ctk.CTkFrame):
 
         def _worker():
             try:
+                split_pauses = bool(self.chk_split_pauses.get()) if hasattr(self, 'chk_split_pauses') else True
                 aligned_data, duration_ms = self.app.aligner.align_timestamps(
                     audio,
                     data,
-                    lambda s: self.app.run_on_ui_thread(lambda: self.lbl_t1_align_status.configure(text=s))
+                    lambda s: self.app.run_on_ui_thread(lambda: self.lbl_t1_align_status.configure(text=s)),
+                    split_on_pauses=split_pauses,
+                    min_pause_ms=1000
                 )
                 self.app.run_on_ui_thread(lambda: self._on_align_success(aligned_data, duration_ms))
             except Exception as e:
