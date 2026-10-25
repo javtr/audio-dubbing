@@ -86,13 +86,16 @@ export const StudioTab: React.FC = () => {
   const loadWaveforms = useCallback(async () => {
     if (!currentProject) return;
     try {
+      console.log(`[StudioTab] Recargando formas de onda para '${currentProject}'...`);
       const data = await api.getAllWaveforms(currentProject, 1600);
       setOrigPeaks(data.orig_peaks || []);
       setDubPeaks(data.dub_peaks || []);
       setSilences(data.silences || []);
-      setDubbedAudioVersion(Date.now());
+      const newVersion = Date.now();
+      setDubbedAudioVersion(newVersion);
+      console.log(`[StudioTab] Formas de onda y versión de mezcla sincronizadas: ${newVersion}`);
     } catch (err) {
-      console.error('Error fetching all waveforms', err);
+      console.error('[StudioTab] Error fetching all waveforms', err);
     }
   }, [currentProject]);
 

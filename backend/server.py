@@ -5,6 +5,7 @@ import copy
 import json
 import asyncio
 import threading
+import time
 import numpy as np
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -45,6 +46,59 @@ tts_client = PinokioClient(base_url="http://127.0.0.1:7860")
 # Global stop flag for batch TTS
 stop_tts_event = threading.Event()
 mix_export_lock = threading.Lock()
+CURRENT_MIX_FILES: dict[str, str] = {}
+
+
+def get_current_mix_file(paths: dict, project: str) -> str:
+    """Devuelve la ruta al archivo de mezcla activo más reciente para el proyecto."""
+    mix_dir = os.path.join(paths["root"], "mix")
+    os.makedirs(mix_dir, exist_ok=True)
+    if project in CURRENT_MIX_FILES:
+        current = os.path.join(mix_dir, CURRENT_MIX_FILES[project])
+        if os.path.exists(current):
+            return current
+            
+    # Buscar el archivo de mezcla más reciente en disco si existe
+    mix_files = [f for f in os.listdir(mix_dir) if f.startswith("dubbed_mix") and f.endswith(".mp3")]
+    if mix_files:
+        mix_files.sort(key=lambda x: os.path.getmtime(os.path.join(mix_dir, x)), reverse=True)
+        CURRENT_MIX_FILES[project] = mix_files[0]
+        return os.path.join(mix_dir, mix_files[0])
+        
+    return os.path.join(mix_dir, "dubbed_mix.mp3")
+
+
+def export_dubbed_mix_versioned(processor, paths: dict, project: str) -> str:
+    """
+    Genera una mezcla con nombre versionado único.
+    Evita el error WinError 32 / WinError 5 de Windows cuando el navegador tiene abierto el archivo.
+    """
+    with mix_export_lock:
+        mix = processor.mix_dubbed_audio(force=True)
+        if not mix:
+            return ""
+
+        mix_dir = os.path.join(paths["root"], "mix")
+        os.makedirs(mix_dir, exist_ok=True)
+        
+        timestamp = int(time.time() * 1000)
+        new_filename = f"dubbed_mix_{timestamp}.mp3"
+        new_filepath = os.path.join(mix_dir, new_filename)
+
+        print(f"[MIX-EXPORT] Exportando mezcla versión {timestamp} ({len(mix)} ms) para proyecto '{project}'...")
+        mix.export(new_filepath, format="mp3", bitrate="192k")
+        CURRENT_MIX_FILES[project] = new_filename
+
+        # Limpieza oportunista de mezclas anteriores que ya no estén bloqueadas
+        for f in os.listdir(mix_dir):
+            if f != new_filename and (f.startswith("dubbed_mix") and f.endswith(".mp3")):
+                try:
+                    os.remove(os.path.join(mix_dir, f))
+                except Exception:
+                    pass  # Sigue en uso por streaming activo; se limpiará en la próxima ejecución
+
+        print(f"[MIX-EXPORT] Mezcla completada exitosamente: {new_filename}")
+        return new_filepath
 
 
 def calculate_segment_speed_ratio(raw_duration_ms: int, target_span_ms: int, manual_ratio: Optional[float] = None) -> float:
@@ -84,7 +138,8 @@ def process_segment_from_raw(paths: dict, segment: dict, requested_ratio: Option
     
     # Salvaguardar en raw/ si aún no existe
     if not os.path.exists(raw_path) and os.path.exists(active_path):
-        shutil.copy2(active_path, raw_path)
+        shutil.copy(active_path, raw_path)
+        os.utime(raw_path, None)
         
     if not os.path.exists(raw_path):
         return segment
@@ -101,8 +156,10 @@ def process_segment_from_raw(paths: dict, segment: dict, requested_ratio: Option
     )
     
     if abs(final_ratio - 1.0) < 0.005:
-        shutil.copy2(raw_path, active_path)
+        shutil.copy(raw_path, active_path)
+        os.utime(active_path, None)
         clip_len = raw_len
+        print(f"[RATIO-ADJUST] Restaurado 1.0x desde master raw: {filename} | Dur={clip_len}ms")
     else:
         temp_dir = os.path.join(paths["root"], "temp")
         os.makedirs(temp_dir, exist_ok=True)
@@ -115,28 +172,23 @@ def process_segment_from_raw(paths: dict, segment: dict, requested_ratio: Option
             temp_out
         ]
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-        shutil.copy2(temp_out, active_path)
+        shutil.copy(temp_out, active_path)
+        os.utime(active_path, None)
         clip_len = len(AudioSegment.from_file(active_path))
+        print(f"[RATIO-ADJUST] Procesado {final_ratio:.2f}x: {filename} | Master={raw_len}ms -> Salida={clip_len}ms")
         
     segment["raw_duration_ms"] = raw_len
     segment["clip_duration_ms"] = clip_len
     segment["speed_ratio"] = final_ratio
     segment["current_speed_ratio"] = final_ratio
     segment["is_manual_ratio"] = is_manual
-    
-    # Invalidar mix global para forzar rebuild limpio
-    mix_file = os.path.join(paths["root"], "mix", "dubbed_mix.mp3")
-    if os.path.exists(mix_file):
-        try:
-            os.remove(mix_file)
-        except Exception:
-            pass
+    segment["end_ms"] = segment.get("start_ms", 0) + clip_len
             
     return segment
 
 
 def export_dubbed_mix_atomic(processor, mix_file: str) -> bool:
-    """Exporta dubbed_mix.mp3 de forma atómica con cerrojo de subprocesos y archivo temporal."""
+    """Función de compatibilidad: exporta dubbed_mix.mp3 de forma atómica."""
     with mix_export_lock:
         mix = processor.mix_dubbed_audio(force=True)
         if not mix:
@@ -156,7 +208,7 @@ def export_dubbed_mix_atomic(processor, mix_file: str) -> bool:
             os.replace(temp_mix_file, mix_file)
             return True
         except Exception as e:
-            print("Error en exportación atómica de mezcla:", e)
+            print("[MIX-WARN] Error en exportación atómica fija (usando versionada como alternativa):", e)
             if os.path.exists(temp_mix_file):
                 try:
                     os.remove(temp_mix_file)
@@ -792,14 +844,12 @@ def stream_dubbed_audio(project: str, force: bool = False):
     metadata = pm.load_project_metadata(project)
     audio_path = paths.get("audio_file")
     audios_dir = paths.get("audios_dir")
-    mix_dir = os.path.join(paths["root"], "mix")
-    os.makedirs(mix_dir, exist_ok=True)
-    mix_file = os.path.join(mix_dir, "dubbed_mix.mp3")
 
-    metadata_file = paths.get("metadata_file")
-    rebuild = force or not os.path.exists(mix_file)
-    if not rebuild and os.path.exists(mix_file):
-        mix_mtime = os.path.getmtime(mix_file)
+    current_mix = get_current_mix_file(paths, project)
+    rebuild = force or not os.path.exists(current_mix)
+    if not rebuild and os.path.exists(current_mix):
+        mix_mtime = os.path.getmtime(current_mix)
+        metadata_file = paths.get("metadata_file")
         if metadata_file and os.path.exists(metadata_file) and os.path.getmtime(metadata_file) > mix_mtime:
             rebuild = True
         elif audios_dir and os.path.exists(audios_dir):
@@ -811,15 +861,12 @@ def stream_dubbed_audio(project: str, force: bool = False):
 
     if rebuild:
         processor = AudioProcessor(audio_path, audios_dir, metadata)
-        success = export_dubbed_mix_atomic(processor, mix_file)
-        if not success:
+        current_mix = export_dubbed_mix_versioned(processor, paths, project)
+        if not current_mix or not os.path.exists(current_mix):
             raise HTTPException(status_code=404, detail="No se pudo generar la mezcla doblada.")
 
-    if not os.path.exists(mix_file):
-        raise HTTPException(status_code=404, detail="Mezcla doblada no disponible.")
-
     return FileResponse(
-        mix_file,
+        current_mix,
         media_type="audio/mpeg",
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate",
@@ -857,16 +904,8 @@ def get_all_waveforms(project: str, points: int = 1600):
                 total_dur_ms = len(dub_mix)
             dub_peaks = compute_min_max_waveform(dub_mix, num_bins=points)
 
-            # Keep dubbed_mix.mp3 synchronized atomically
-            mix_dir = os.path.join(paths["root"], "mix")
-            mix_file = os.path.join(mix_dir, "dubbed_mix.mp3")
-            need_export = not os.path.exists(mix_file)
-            if not need_export and audios_dir and os.path.exists(audios_dir):
-                mix_mtime = os.path.getmtime(mix_file)
-                if any(os.path.getmtime(os.path.join(audios_dir, f)) > mix_mtime for f in os.listdir(audios_dir) if f.endswith(".wav")):
-                    need_export = True
-            if need_export:
-                export_dubbed_mix_atomic(processor, mix_file)
+            # Keep dubbed mix synchronized cleanly via versioned export
+            export_dubbed_mix_versioned(processor, paths, project)
     except Exception as e:
         print("Error mixing dubbed audio for waveform:", e)
 
@@ -909,6 +948,7 @@ class AdjustRatioRequest(BaseModel):
 
 @app.post("/api/timeline/adjust-ratio")
 def adjust_segment_ratio(req: AdjustRatioRequest):
+    print(f"[TIMELINE-ADJUST] Solicitud: project={req.project}, segment_id={req.segment_id}, ratio={req.ratio}")
     paths = pm.get_project_paths(req.project)
     metadata = pm.load_project_metadata(req.project)
 
@@ -924,7 +964,15 @@ def adjust_segment_ratio(req: AdjustRatioRequest):
     )
 
     pm.save_project_metadata(req.project, metadata)
+    
+    # Reconstruir la mezcla inmediatamente con la nueva versión
+    audio_path = paths.get("audio_file")
+    audios_dir = paths.get("audios_dir")
+    processor = AudioProcessor(audio_path, audios_dir, metadata)
+    export_dubbed_mix_versioned(processor, paths, req.project)
+
     val = TimingValidator.validate(metadata)
+    print(f"[TIMELINE-ADJUST] Completado con éxito: segment_id={req.segment_id}, dur={updated_seg.get('clip_duration_ms')}ms")
     return {"status": "ok", "segment": updated_seg, "metadata": metadata, "validation": val}
 
 
@@ -940,19 +988,58 @@ class UpdateTimingsRequest(BaseModel):
 def update_project_timings(req: UpdateTimingsRequest):
     paths = pm.get_project_paths(req.project)
     metadata = pm.load_project_metadata(req.project)
+    audio_path = paths.get("audio_file")
+    audios_dir = paths.get("audios_dir")
     
+    print(f"[TIMINGS-UPDATE] Actualizando y recalculando tiempos para {len(req.timings)} segmentos en proyecto '{req.project}'...")
     timing_map = {t.id: t.start_ms for t in req.timings}
     for seg in metadata:
         sid = str(seg.get("id"))
         if sid in timing_map:
             seg["start_ms"] = max(0, timing_map[sid])
 
-    processor = AudioProcessor(paths.get("audio_file"), paths.get("audios_dir"), metadata)
-    processor.recalculate_end_times()
+    # Ordenar cronológicamente
+    metadata.sort(key=lambda x: x.get("start_ms", 0))
 
-    pm.save_project_metadata(req.project, processor.metadata)
-    val = TimingValidator.validate(processor.metadata)
-    return {"status": "ok", "metadata": processor.metadata, "validation": val}
+    # Obtener duración total del audio original para límite del último segmento
+    from pydub import AudioSegment
+    total_audio_ms = 0
+    if audio_path and os.path.exists(audio_path):
+        try:
+            total_audio_ms = len(AudioSegment.from_file(audio_path))
+        except Exception:
+            total_audio_ms = 0
+
+    # Recalcular spans y procesar segmentos automáticos
+    for i, seg in enumerate(metadata):
+        cur_start = seg.get("start_ms", 0)
+        if i < len(metadata) - 1:
+            next_start = metadata[i+1].get("start_ms", cur_start + 1000)
+            available_span = max(100, next_start - cur_start)
+        else:
+            available_span = max(1000, total_audio_ms - cur_start) if total_audio_ms > cur_start else 10000
+
+        if not seg.get("is_manual_ratio"):
+            seg["end_ms"] = cur_start + available_span
+            process_segment_from_raw(paths, seg, is_manual=False)
+        else:
+            # Respetar ratio fijado por el usuario
+            clip_dur = seg.get("clip_duration_ms", 0)
+            if clip_dur <= 0:
+                raw_p = os.path.join(audios_dir, "raw", seg.get("filename", ""))
+                if os.path.exists(raw_p):
+                    clip_dur = len(AudioSegment.from_file(raw_p))
+            seg["end_ms"] = cur_start + clip_dur
+
+    pm.save_project_metadata(req.project, metadata)
+    
+    # Regenerar mezcla versionada
+    processor = AudioProcessor(audio_path, audios_dir, metadata)
+    export_dubbed_mix_versioned(processor, paths, req.project)
+
+    val = TimingValidator.validate(metadata)
+    print(f"[TIMINGS-UPDATE] Recálculo completado con éxito para proyecto '{req.project}'.")
+    return {"status": "ok", "metadata": metadata, "validation": val}
 
 
 class DeleteSegmentRequest(BaseModel):

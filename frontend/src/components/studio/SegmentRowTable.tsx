@@ -28,6 +28,13 @@ export const SegmentRowTable: React.FC<Props> = ({ onRefreshWaveforms }) => {
   const [localStarts, setLocalStarts] = useState<Record<string, number>>({});
   const [localRatios, setLocalRatios] = useState<Record<string, number>>({});
 
+  // Resetear estados locales al cambiar de proyecto para evitar estados fantasmas
+  useEffect(() => {
+    setLocalStarts({});
+    setLocalRatios({});
+  }, [currentProject]);
+
+  // Sincronizar inputs locales cuando cambian los segmentos
   useEffect(() => {
     setLocalStarts((prev) => {
       const nextStarts = { ...prev };
@@ -52,10 +59,11 @@ export const SegmentRowTable: React.FC<Props> = ({ onRefreshWaveforms }) => {
     });
   }, [segments]);
 
-  // Play individual segment slice
+  // Reproducir fragmento individual con cache-buster dinámico
   const handleTogglePlay = (seg: Segment) => {
     const segId = String(seg.id);
     if (playingSegmentId === segId && activeAudio) {
+      console.log(`[SegmentRowTable] Deteniendo reproducción de ${seg.filename}`);
       activeAudio.pause();
       setActiveAudio(null);
       setPlayingSegmentId(null);
@@ -67,45 +75,62 @@ export const SegmentRowTable: React.FC<Props> = ({ onRefreshWaveforms }) => {
     }
 
     if (!currentProject) return;
-    const url = `/api/audio/${currentProject}/segment/${seg.filename}`;
+    // Parámetro ?t=${Date.now()} para asegurar que el navegador nunca use caché de audio anterior
+    const url = `/api/audio/${currentProject}/segment/${seg.filename}?t=${Date.now()}`;
+    console.log(`[SegmentRowTable] Reproduciendo fragmento ${seg.filename} (url: ${url})`);
     const audio = new Audio(url);
-    audio.onended = () => setPlayingSegmentId(null);
-    audio.onerror = () => setPlayingSegmentId(null);
-    audio.play().catch(() => setPlayingSegmentId(null));
+    audio.onended = () => {
+      console.log(`[SegmentRowTable] Fin de reproducción: ${seg.filename}`);
+      setPlayingSegmentId(null);
+    };
+    audio.onerror = (e) => {
+      console.error(`[SegmentRowTable] Error reproduciendo ${seg.filename}:`, e);
+      setPlayingSegmentId(null);
+    };
+    audio.play().catch((err) => {
+      console.warn(`[SegmentRowTable] Reproducción interrumpida o bloqueada:`, err);
+      setPlayingSegmentId(null);
+    });
 
     setActiveAudio(audio);
     setPlayingSegmentId(segId);
   };
 
-  // Adjust custom ratio with FFmpeg atempo
+  // Ajustar ratio personalizado con FFmpeg atempo
   const handleAdjustRatio = async (seg: Segment) => {
     if (!currentProject) return;
     const segId = String(seg.id);
     const r = localRatios[segId] ?? seg.speed_ratio ?? seg.current_speed_ratio ?? 1.0;
 
+    console.log(`[SegmentRowTable] Solicitando ajuste de ratio: seg=${segId}, ratio=${r}`);
     setAdjustingId(segId);
     try {
       const res = await api.adjustSegmentRatio(currentProject, segId, r);
       const confirmedRatio = res.segment.speed_ratio ?? res.segment.current_speed_ratio ?? r;
+      console.log(`[SegmentRowTable] Servidor confirmó: seg=${segId}, ratio=${confirmedRatio}, dur=${res.segment.clip_duration_ms}ms, fin=${res.segment.end_ms}ms`);
+      
       updateSegment(seg.id, {
         clip_duration_ms: res.segment.clip_duration_ms,
         speed_ratio: confirmedRatio,
         current_speed_ratio: confirmedRatio,
         is_manual_ratio: true,
+        end_ms: res.segment.end_ms,
       });
       setLocalRatios((prev) => ({ ...prev, [segId]: confirmedRatio }));
       onRefreshWaveforms();
     } catch (err: any) {
+      console.error(`[SegmentRowTable] Error al ajustar velocidad:`, err);
       alert(`Error al ajustar velocidad: ${err?.response?.data?.detail || err.message}`);
     } finally {
       setAdjustingId(null);
     }
   };
 
-  // Apply all start_ms changes and recalculate project timeline
+  // Aplicar todos los cambios de tiempos y recalcular la línea de tiempo completa
   const handleApplyAllTimings = async () => {
     if (!currentProject) return;
     setIsApplyingTimings(true);
+    console.log(`[SegmentRowTable] Enviando aplicación y recálculo de tiempos para ${segments.length} segmentos...`);
     try {
       const payload = segments.map((s) => ({
         id: String(s.id),
@@ -113,8 +138,22 @@ export const SegmentRowTable: React.FC<Props> = ({ onRefreshWaveforms }) => {
       }));
       const res = await api.updateProjectTimings(currentProject, payload);
       useProjectStore.getState().setSegments(res.metadata);
+
+      // Sincronizar inputs locales con los valores recalculados confirmados por el servidor
+      const freshStarts: Record<string, number> = {};
+      const freshRatios: Record<string, number> = {};
+      res.metadata.forEach((s) => {
+        const sid = String(s.id);
+        freshStarts[sid] = s.start_ms;
+        freshRatios[sid] = s.speed_ratio ?? s.current_speed_ratio ?? 1.0;
+      });
+      setLocalStarts(freshStarts);
+      setLocalRatios(freshRatios);
+
+      console.log(`[SegmentRowTable] Recálculo completado y sincronizado con éxito.`);
       onRefreshWaveforms();
     } catch (err: any) {
+      console.error(`[SegmentRowTable] Error al aplicar tiempos:`, err);
       alert(`Error al aplicar tiempos: ${err.message}`);
     } finally {
       setIsApplyingTimings(false);

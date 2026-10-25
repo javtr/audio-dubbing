@@ -57,11 +57,20 @@ class AudioProcessor:
         if not filename:
             return None, 1.0
 
+        # Si el archivo activo ya existe en audios/ y no se solicita ratio manual explícito,
+        # cargarlo directamente para mezcla instantánea y 100% fidedigna
+        active_path = os.path.join(self.audios_dir, filename) if self.audios_dir else ""
+        if active_path and os.path.exists(active_path) and manual_ratio is None:
+            processed_audio = AudioSegment.from_file(active_path)
+            self.processed_segments[filename] = processed_audio
+            self.mark_mix_dirty()
+            return processed_audio, segment.get("speed_ratio", 1.0)
+
         raw_path = os.path.join(self.audios_dir, "raw", filename) if self.audios_dir else ""
         if raw_path and os.path.exists(raw_path):
             source_filepath = raw_path
         else:
-            source_filepath = os.path.join(self.audios_dir, filename) if self.audios_dir else ""
+            source_filepath = active_path
 
         if not os.path.exists(source_filepath):
             return None, 1.0
