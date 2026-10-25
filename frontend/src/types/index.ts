@@ -11,6 +11,21 @@ export interface Segment {
   current_speed_ratio?: number;
 }
 
+export interface SilenceGap {
+  start_ms: number;
+  end_ms: number;
+  dur_s: number;
+  segment_id: string;
+  level: 'warning' | 'critical';
+}
+
+export interface AllWaveformsResponse {
+  duration_ms: number;
+  orig_peaks: number[];
+  dub_peaks: number[];
+  silences: SilenceGap[];
+}
+
 export interface ValidationResult {
   has_errors: boolean;
   error_count: number;

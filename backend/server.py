@@ -496,6 +496,35 @@ def stop_tts():
 
 # ==================== AUDIO STREAMING & WAVEFORMS ====================
 
+def compute_min_max_waveform(audio_segment, num_bins=1600):
+    if not audio_segment:
+        return []
+    samples = np.array(audio_segment.get_array_of_samples(), dtype=np.float32)
+    if audio_segment.channels == 2:
+        samples = samples[::2]
+    
+    total_samples = len(samples)
+    if total_samples == 0:
+        return []
+
+    max_amp = float(np.max(np.abs(samples)))
+    if max_amp > 0:
+        samples /= max_amp
+
+    bin_size = max(1, total_samples // num_bins)
+    peaks = []
+    for i in range(num_bins):
+        start = i * bin_size
+        end = min(total_samples, start + bin_size)
+        if start < total_samples:
+            chunk = samples[start:end]
+            peaks.append(round(float(np.min(chunk)), 3))
+            peaks.append(round(float(np.max(chunk)), 3))
+        else:
+            peaks.extend([0.0, 0.0])
+    return peaks
+
+
 @app.get("/api/audio/{project}/original")
 def stream_original_audio(project: str):
     paths = pm.get_project_paths(project)
@@ -514,38 +543,151 @@ def stream_segment_audio(project: str, filename: str):
     return FileResponse(seg_path, media_type="audio/wav")
 
 
-@app.get("/api/waveform/{project}/original")
-def get_original_waveform(project: str, points: int = 1500):
+@app.get("/api/waveform/{project}/all")
+def get_all_waveforms(project: str, points: int = 1600):
     paths = pm.get_project_paths(project)
+    metadata = pm.load_project_metadata(project)
+    
     audio_path = paths.get("audio_file")
-    if not audio_path or not os.path.exists(audio_path):
-        raise HTTPException(status_code=404, detail="Audio original no encontrado.")
+    orig_peaks = []
+    total_dur_ms = 0
+    from pydub import AudioSegment
+    if audio_path and os.path.exists(audio_path):
+        try:
+            audio_orig = AudioSegment.from_file(audio_path)
+            total_dur_ms = len(audio_orig)
+            orig_peaks = compute_min_max_waveform(audio_orig, num_bins=points)
+        except Exception as e:
+            print("Error loading original audio for waveform:", e)
 
+    # Dubbed mix waveform & dead silence gaps
+    audios_dir = paths.get("audios_dir", "")
+    processor = AudioProcessor(audio_path, audios_dir, metadata)
+    dub_peaks = []
     try:
-        from pydub import AudioSegment
-        audio = AudioSegment.from_file(audio_path)
-        samples = np.array(audio.get_array_of_samples(), dtype=np.float32)
-        if audio.channels == 2:
-            samples = samples[::2]
-        
-        # Normalize between -1.0 and 1.0
-        max_val = np.max(np.abs(samples)) if len(samples) > 0 else 1.0
-        if max_val > 0:
-            samples /= max_val
-
-        # Subsample to points
-        if len(samples) > points:
-            step = len(samples) / float(points)
-            downsampled = [float(samples[int(i * step)]) for i in range(points)]
-        else:
-            downsampled = [float(x) for x in samples]
-
-        return {
-            "duration_ms": len(audio),
-            "points": downsampled
-        }
+        dub_mix = processor.mix_dubbed_audio()
+        if dub_mix:
+            if total_dur_ms == 0:
+                total_dur_ms = len(dub_mix)
+            dub_peaks = compute_min_max_waveform(dub_mix, num_bins=points)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print("Error mixing dubbed audio for waveform:", e)
+
+    # Detect dead silences >= 4.0s
+    silences = []
+    for s in metadata:
+        s_ms = s.get("start_ms", 0)
+        e_ms = s.get("end_ms", 0)
+        fname = s.get("filename", "")
+        fpath = os.path.join(audios_dir, fname) if fname and audios_dir else ""
+        if fpath and os.path.exists(fpath):
+            try:
+                clip_audio = AudioSegment.from_file(fpath)
+                clip_dur = len(clip_audio)
+                voice_end = s_ms + clip_dur
+                gap_ms = e_ms - voice_end
+                if gap_ms >= 4000:
+                    silences.append({
+                        "start_ms": voice_end,
+                        "end_ms": e_ms,
+                        "dur_s": round(gap_ms / 1000.0, 1),
+                        "segment_id": str(s.get("id")),
+                        "level": "critical" if gap_ms > 10000 else "warning"
+                    })
+            except Exception:
+                pass
+
+    return {
+        "duration_ms": total_dur_ms,
+        "orig_peaks": orig_peaks,
+        "dub_peaks": dub_peaks,
+        "silences": silences
+    }
+
+
+class AdjustRatioRequest(BaseModel):
+    project: str
+    segment_id: str
+    ratio: float
+
+@app.post("/api/timeline/adjust-ratio")
+def adjust_segment_ratio(req: AdjustRatioRequest):
+    import shutil
+    paths = pm.get_project_paths(req.project)
+    metadata = pm.load_project_metadata(req.project)
+    audios_dir = paths.get("audios_dir", "")
+
+    target_seg = next((s for s in metadata if str(s.get("id")) == str(req.segment_id)), None)
+    if not target_seg:
+        raise HTTPException(status_code=404, detail="Segmento no encontrado.")
+
+    processor = AudioProcessor(paths.get("audio_file"), audios_dir, metadata)
+    processed_audio, actual_ratio = processor.process_segment(target_seg, manual_ratio=req.ratio)
+    
+    from pydub import AudioSegment
+    target_span = target_seg.get("end_ms", 0) - target_seg.get("start_ms", 0)
+    out_name = f"stretched_{req.ratio:.3f}_{target_seg['filename']}"
+    out_path = os.path.join(processor.temp_dir, out_name)
+    if os.path.exists(out_path):
+        shutil.copy2(out_path, os.path.join(audios_dir, target_seg["filename"]))
+
+    clip_len = len(AudioSegment.from_file(os.path.join(audios_dir, target_seg["filename"])))
+    target_seg["clip_duration_ms"] = clip_len
+    target_seg["current_speed_ratio"] = round(clip_len / float(target_span), 2) if target_span > 0 else req.ratio
+
+    pm.save_project_metadata(req.project, metadata)
+    val = TimingValidator.validate(metadata)
+    return {"status": "ok", "segment": target_seg, "metadata": metadata, "validation": val}
+
+
+class TimingItem(BaseModel):
+    id: str
+    start_ms: int
+
+class UpdateTimingsRequest(BaseModel):
+    project: str
+    timings: list[TimingItem]
+
+@app.post("/api/timeline/update-timings")
+def update_project_timings(req: UpdateTimingsRequest):
+    paths = pm.get_project_paths(req.project)
+    metadata = pm.load_project_metadata(req.project)
+    
+    timing_map = {t.id: t.start_ms for t in req.timings}
+    for seg in metadata:
+        sid = str(seg.get("id"))
+        if sid in timing_map:
+            seg["start_ms"] = max(0, timing_map[sid])
+
+    processor = AudioProcessor(paths.get("audio_file"), paths.get("audios_dir"), metadata)
+    processor.recalculate_end_times()
+
+    pm.save_project_metadata(req.project, processor.metadata)
+    val = TimingValidator.validate(processor.metadata)
+    return {"status": "ok", "metadata": processor.metadata, "validation": val}
+
+
+class DeleteSegmentRequest(BaseModel):
+    project: str
+    segment_id: str
+
+@app.post("/api/timeline/delete-segment")
+def delete_segment(req: DeleteSegmentRequest):
+    paths = pm.get_project_paths(req.project)
+    metadata = pm.load_project_metadata(req.project)
+    
+    metadata = [s for s in metadata if str(s.get("id")) != str(req.segment_id)]
+    
+    processor = AudioProcessor(paths.get("audio_file"), paths.get("audios_dir"), metadata)
+    processor.recalculate_end_times()
+
+    for i, s in enumerate(processor.metadata):
+        s["filename"] = f"segment_{i:03d}.wav"
+
+    pm.save_project_metadata(req.project, processor.metadata)
+    val = TimingValidator.validate(processor.metadata)
+    return {"status": "ok", "metadata": processor.metadata, "validation": val}
+
 
 
 # ==================== TIMELINE TOOLS & SPLITTING ====================

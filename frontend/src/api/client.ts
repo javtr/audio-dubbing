@@ -127,3 +127,37 @@ export const getOriginalWaveform = async (project: string, points = 1500) => {
   const res = await api.get(`/waveform/${project}/original?points=${points}`);
   return res.data;
 };
+
+
+export const getAllWaveforms = async (project: string, points = 1600): Promise<import('../types').AllWaveformsResponse> => {
+  const res = await api.get(`/waveform/${project}/all?points=${points}`);
+  return res.data;
+};
+
+export const adjustSegmentRatio = async (project: string, segmentId: string | number, ratio: number) => {
+  const res = await api.post('/timeline/adjust-ratio', {
+    project,
+    segment_id: String(segmentId),
+    ratio: Number(ratio),
+  });
+  return res.data;
+};
+
+export const updateProjectTimings = async (
+  project: string,
+  timings: { id: string | number; start_ms: number }[]
+) => {
+  const res = await api.post('/timeline/update-timings', {
+    project,
+    timings: timings.map((t) => ({ id: String(t.id), start_ms: Number(t.start_ms) })),
+  });
+  return res.data;
+};
+
+export const deleteSegment = async (project: string, segmentId: string | number) => {
+  const res = await api.post('/timeline/delete-segment', {
+    project,
+    segment_id: String(segmentId),
+  });
+  return res.data;
+};

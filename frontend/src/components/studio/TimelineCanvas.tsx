@@ -1,5 +1,5 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { Segment } from '../../types';
+import React, { useRef, useEffect, useState } from 'react';
+import { Segment, SilenceGap } from '../../types';
 
 interface Props {
   segments: Segment[];
@@ -13,7 +13,9 @@ interface Props {
   onSelectSegment: (id: string) => void;
   onSplitSegment: (id: string, cutMs: number) => void;
   onViewOffsetChange: (offsetMs: number) => void;
-  origWaveformPoints?: number[];
+  origPeaks?: number[];    // [min0, max0, min1, max1, ...]
+  dubPeaks?: number[];     // [min0, max0, min1, max1, ...]
+  silences?: SilenceGap[];
 }
 
 export const TimelineCanvas: React.FC<Props> = ({
@@ -28,7 +30,9 @@ export const TimelineCanvas: React.FC<Props> = ({
   onSelectSegment,
   onSplitSegment,
   onViewOffsetChange,
-  origWaveformPoints = [],
+  origPeaks = [],
+  dubPeaks = [],
+  silences = [],
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -36,11 +40,12 @@ export const TimelineCanvas: React.FC<Props> = ({
   const [isPanning, setIsPanning] = useState(false);
   const panStartRef = useRef<{ x: number; offset: number }>({ x: 0, offset: 0 });
 
+  const RULER_H = 26;
   const TRACK1_Y = 30;
-  const TRACK1_H = 75;
-  const TRACK2_Y = 120;
-  const TRACK2_H = 75;
-  const TOTAL_H = 210;
+  const TRACK1_H = 90;
+  const TRACK2_Y = 130;
+  const TRACK2_H = 90;
+  const TOTAL_H = 230;
 
   // Render Loop
   useEffect(() => {
@@ -52,33 +57,32 @@ export const TimelineCanvas: React.FC<Props> = ({
     const width = canvas.width;
     const height = canvas.height;
 
-    // Helper: ms to canvas X
+    // Helper conversions
     const msToX = (ms: number) => ((ms - viewOffsetMs) / 1000) * zoom;
     const xToMs = (x: number) => viewOffsetMs + (x / zoom) * 1000;
 
     // Clear background
-    ctx.fillStyle = '#121212';
+    ctx.fillStyle = '#111111';
     ctx.fillRect(0, 0, width, height);
 
-    // 1. Time Ruler & Grid
-    ctx.fillStyle = '#1e1e1e';
-    ctx.fillRect(0, 0, width, 24);
-    ctx.strokeStyle = '#2a2a2a';
+    // ================= 1. TIME RULER & TICKS =================
+    ctx.fillStyle = '#1c1c1c';
+    ctx.fillRect(0, 0, width, RULER_H);
+    ctx.strokeStyle = '#2d2d2d';
     ctx.lineWidth = 1;
 
-    // Second markers
-    const secStep = zoom > 100 ? 1 : zoom > 40 ? 5 : 10;
+    const secStep = zoom > 120 ? 1 : zoom > 50 ? 5 : 10;
     const startSec = Math.floor(viewOffsetMs / 1000);
     const endSec = Math.ceil(xToMs(width) / 1000);
 
-    ctx.fillStyle = '#737373';
+    ctx.fillStyle = '#888888';
     ctx.font = '10px monospace';
     for (let s = startSec; s <= endSec; s += secStep) {
       const x = msToX(s * 1000);
       if (x >= 0 && x <= width) {
         ctx.beginPath();
         ctx.moveTo(x, 14);
-        ctx.lineTo(x, 24);
+        ctx.lineTo(x, RULER_H);
         ctx.stroke();
 
         const mins = Math.floor(s / 60);
@@ -88,146 +92,249 @@ export const TimelineCanvas: React.FC<Props> = ({
       }
     }
 
-    // 2. Track 1: Original Audio Track Background
-    ctx.fillStyle = '#171717';
+    // ================= 2. TRACK 1: ORIGINAL AUDIO TRACK =================
+    ctx.fillStyle = '#161616';
     ctx.fillRect(0, TRACK1_Y, width, TRACK1_H);
-    ctx.strokeStyle = '#262626';
+    ctx.strokeStyle = '#282828';
     ctx.strokeRect(0, TRACK1_Y, width, TRACK1_H);
 
-    // Track 1 Waveform
-    if (origWaveformPoints.length > 0 && totalDurationMs > 0) {
-      ctx.strokeStyle = '#38bdf8';
-      ctx.lineWidth = 1.2;
-      ctx.beginPath();
+    // Draw Original Audio Waveform (Min/Max Envelope Bars)
+    if (origPeaks.length > 0 && totalDurationMs > 0) {
       const midY = TRACK1_Y + TRACK1_H / 2;
-      const ptsCount = origWaveformPoints.length;
+      const halfH = TRACK1_H * 0.44;
+      const numBins = Math.floor(origPeaks.length / 2);
 
-      for (let i = 0; i < ptsCount; i++) {
-        const pointMs = (i / ptsCount) * totalDurationMs;
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+
+      for (let i = 0; i < numBins; i++) {
+        const pointMs = (i / numBins) * totalDurationMs;
         const x = msToX(pointMs);
-        if (x >= 0 && x <= width) {
-          const val = origWaveformPoints[i];
-          const y = midY - val * (TRACK1_H * 0.42);
-          if (i === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
-        }
+        if (x < -2 || x > width + 2) continue;
+
+        const minVal = origPeaks[i * 2];
+        const maxVal = origPeaks[i * 2 + 1];
+
+        const yTop = midY - maxVal * halfH;
+        const yBottom = midY - minVal * halfH;
+
+        ctx.moveTo(x, yTop);
+        ctx.lineTo(x, Math.max(yTop + 1.2, yBottom));
       }
       ctx.stroke();
     }
 
-    // Track 1 Header Tag
-    ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    ctx.fillRect(8, TRACK1_Y + 4, 110, 18);
-    ctx.fillStyle = '#38bdf8';
-    ctx.font = 'bold 10px sans-serif';
-    ctx.fillText('Pista Original (ES)', 14, TRACK1_Y + 16);
+    // Original Section Division Cut Marks
+    segments.forEach((seg) => {
+      const sX = msToX(seg.orig_start_ms !== undefined ? seg.orig_start_ms : seg.start_ms);
+      const eX = msToX(seg.orig_end_ms !== undefined ? seg.orig_end_ms : seg.end_ms);
+      if (sX >= 0 && sX <= width) {
+        ctx.strokeStyle = '#0284c7';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(sX, TRACK1_Y);
+        ctx.lineTo(sX, TRACK1_Y + TRACK1_H);
+        ctx.stroke();
+      }
+      if (eX >= 0 && eX <= width) {
+        ctx.strokeStyle = '#0284c7';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(eX, TRACK1_Y);
+        ctx.lineTo(eX, TRACK1_Y + TRACK1_H);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    });
 
-    // 3. Track 2: Dubbed Audio Track Background
-    ctx.fillStyle = '#171717';
+    // Track 1 Header Badge
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(8, TRACK1_Y + 6, 120, 20);
+    ctx.fillStyle = '#38bdf8';
+    ctx.font = 'bold 11px sans-serif';
+    ctx.fillText('Pista Original (ES)', 14, TRACK1_Y + 20);
+
+    // ================= 3. TRACK 2: DUBBED AUDIO TRACK =================
+    ctx.fillStyle = '#161616';
     ctx.fillRect(0, TRACK2_Y, width, TRACK2_H);
-    ctx.strokeStyle = '#262626';
+    ctx.strokeStyle = '#282828';
     ctx.strokeRect(0, TRACK2_Y, width, TRACK2_H);
 
-    // Track 2 Header Tag
-    ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    ctx.fillRect(8, TRACK2_Y + 4, 115, 18);
-    ctx.fillStyle = '#22c55e';
-    ctx.font = 'bold 10px sans-serif';
-    ctx.fillText('Pista Doblada (TTS)', 14, TRACK2_Y + 16);
+    // Draw Dubbed Audio Waveform (Min/Max Envelope Bars)
+    if (dubPeaks.length > 0 && totalDurationMs > 0) {
+      const midY = TRACK2_Y + TRACK2_H / 2;
+      const halfH = TRACK2_H * 0.44;
+      const numBins = Math.floor(dubPeaks.length / 2);
 
-    // Draw Segments in Track 2
+      ctx.strokeStyle = '#ff7f0e';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+
+      for (let i = 0; i < numBins; i++) {
+        const pointMs = (i / numBins) * totalDurationMs;
+        const x = msToX(pointMs);
+        if (x < -2 || x > width + 2) continue;
+
+        const minVal = dubPeaks[i * 2];
+        const maxVal = dubPeaks[i * 2 + 1];
+
+        const yTop = midY - maxVal * halfH;
+        const yBottom = midY - minVal * halfH;
+
+        ctx.moveTo(x, yTop);
+        ctx.lineTo(x, Math.max(yTop + 1.2, yBottom));
+      }
+      ctx.stroke();
+    }
+
+    // ================= 4. DEAD SILENCE GAPS (>= 4.0s) =================
+    silences.forEach((sil) => {
+      const sX = msToX(sil.start_ms);
+      const eX = msToX(sil.end_ms);
+      if (eX < 0 || sX > width) return;
+
+      const spanW = Math.max(3, eX - sX);
+      const isCritical = sil.level === 'critical'; // > 10s: Magenta neon, 4-10s: Orange
+
+      const faceColor = isCritical ? 'rgba(217, 70, 239, 0.45)' : 'rgba(234, 88, 12, 0.40)';
+      const edgeColor = isCritical ? '#f43f5e' : '#f97316';
+      const badgeBg = isCritical ? '#d946ef' : '#ea580c';
+
+      // Shaded background
+      ctx.fillStyle = faceColor;
+      ctx.fillRect(sX, TRACK2_Y + 2, spanW, TRACK2_H - 4);
+
+      // Hatched stripes (//)
+      ctx.strokeStyle = edgeColor;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let hX = sX; hX < sX + spanW; hX += 8) {
+        ctx.moveTo(hX, TRACK2_Y + TRACK2_H - 2);
+        ctx.lineTo(Math.min(hX + 12, sX + spanW), TRACK2_Y + 2);
+      }
+      ctx.stroke();
+
+      // Border lines
+      ctx.strokeStyle = edgeColor;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 2]);
+      ctx.strokeRect(sX, TRACK2_Y + 2, spanW, TRACK2_H - 4);
+      ctx.setLineDash([]);
+
+      // Floating Duration Badge (+X.Xs)
+      if (spanW > 30) {
+        const badgeX = sX + spanW / 2;
+        const badgeY = TRACK2_Y + 20;
+        const text = `+${sil.dur_s}s`;
+
+        ctx.fillStyle = badgeBg;
+        ctx.beginPath();
+        ctx.roundRect(badgeX - 18, badgeY - 10, 36, 16, 4);
+        ctx.fill();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 9px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(text, badgeX, badgeY + 2);
+        ctx.textAlign = 'left';
+      }
+    });
+
+    // ================= 5. SEGMENT BOXES, CUT MARKS & SELECTION =================
     segments.forEach((seg) => {
-      const x1 = msToX(seg.start_ms);
-      const x2 = msToX(seg.end_ms);
-      if (x2 < 0 || x1 > width) return; // Frustum culling
+      const sX = msToX(seg.start_ms);
+      const eX = msToX(seg.end_ms);
+      if (eX < 0 || sX > width) return;
 
-      const blockW = Math.max(3, x2 - x1);
+      const blockW = Math.max(3, eX - sX);
       const isSelected = selectedSegmentId === String(seg.id);
       const ratio = seg.current_speed_ratio || 1.0;
       const hasAudio = seg.clip_duration_ms && seg.clip_duration_ms > 0;
 
-      // Color coding based on speed
-      let fillColor = 'rgba(34, 197, 94, 0.25)'; // Green 1.0x
-      let strokeColor = '#22c55e';
-      if (ratio > 1.35) {
-        fillColor = 'rgba(239, 68, 68, 0.35)'; // Red
-        strokeColor = '#ef4444';
-      } else if (ratio > 1.20 || ratio < 0.90) {
-        fillColor = 'rgba(245, 158, 11, 0.3)'; // Amber
-        strokeColor = '#f59e0b';
-      }
-
-      if (!hasAudio) {
-        fillColor = 'rgba(64, 64, 64, 0.25)';
-        strokeColor = '#525252';
-      }
-
+      // Selection Highlight (Neon Yellow)
       if (isSelected) {
-        ctx.fillStyle = 'rgba(56, 189, 248, 0.35)';
-        ctx.strokeStyle = '#38bdf8';
-        ctx.lineWidth = 2;
-      } else {
-        ctx.fillStyle = fillColor;
-        ctx.strokeStyle = strokeColor;
-        ctx.lineWidth = 1;
+        ctx.fillStyle = 'rgba(255, 230, 0, 0.22)';
+        ctx.fillRect(sX, TRACK2_Y + 2, blockW, TRACK2_H - 4);
+
+        ctx.strokeStyle = '#ffe600';
+        ctx.lineWidth = 2.5;
+        ctx.strokeRect(sX, TRACK2_Y + 2, blockW, TRACK2_H - 4);
       }
 
-      ctx.fillRect(x1, TRACK2_Y + 4, blockW, TRACK2_H - 8);
-      ctx.strokeRect(x1, TRACK2_Y + 4, blockW, TRACK2_H - 8);
+      // Cut marks on boundaries (Dashed Red Lines)
+      ctx.strokeStyle = '#ff5252';
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([3, 2]);
+      ctx.beginPath();
+      ctx.moveTo(sX, TRACK2_Y);
+      ctx.lineTo(sX, TRACK2_Y + TRACK2_H);
+      ctx.moveTo(eX, TRACK2_Y);
+      ctx.lineTo(eX, TRACK2_Y + TRACK2_H);
+      ctx.stroke();
+      ctx.setLineDash([]);
 
-      // Segment text snippet
+      // Segment text and info pill
       if (blockW > 35) {
-        ctx.fillStyle = '#ffffff';
-        ctx.font = '10px sans-serif';
+        ctx.fillStyle = isSelected ? '#ffe600' : '#ffffff';
+        ctx.font = 'bold 10px sans-serif';
         const label = `[${seg.id}] ${ratio.toFixed(2)}x`;
-        ctx.fillText(label, x1 + 4, TRACK2_Y + 22);
+        ctx.fillText(label, sX + 4, TRACK2_Y + TRACK2_H - 10);
 
-        if (blockW > 70) {
+        if (blockW > 80) {
           ctx.fillStyle = '#a3a3a3';
           ctx.font = '9px sans-serif';
           const textPreview = seg.translated.slice(0, Math.floor(blockW / 7));
-          ctx.fillText(textPreview, x1 + 4, TRACK2_Y + 38);
+          ctx.fillText(textPreview, sX + 4, TRACK2_Y + 36);
         }
       }
     });
 
-    // 4. Playhead (Scrubber Line)
+    // Track 2 Header Badge
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(8, TRACK2_Y + 6, 125, 20);
+    ctx.fillStyle = '#ff7f0e';
+    ctx.font = 'bold 11px sans-serif';
+    ctx.fillText('Pista Doblada (TTS)', 14, TRACK2_Y + 20);
+
+    // ================= 6. PLAYHEAD (SCRUBBER LINE) =================
     const playheadX = msToX(playheadMs);
     if (playheadX >= 0 && playheadX <= width) {
-      // Glow effect
-      ctx.strokeStyle = 'rgba(249, 115, 22, 0.3)';
+      // Glow
+      ctx.strokeStyle = 'rgba(255, 230, 0, 0.35)';
       ctx.lineWidth = 6;
       ctx.beginPath();
       ctx.moveTo(playheadX, 0);
       ctx.lineTo(playheadX, height);
       ctx.stroke();
 
-      // Sharp line
-      ctx.strokeStyle = '#f97316';
+      // Sharp Yellow Scrubber Line
+      ctx.strokeStyle = '#ffe600';
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.moveTo(playheadX, 0);
       ctx.lineTo(playheadX, height);
       ctx.stroke();
 
-      // Playhead Top Handle
-      ctx.fillStyle = '#f97316';
+      // Playhead Top Pointer Arrow
+      ctx.fillStyle = '#ffe600';
       ctx.beginPath();
       ctx.moveTo(playheadX - 6, 0);
       ctx.lineTo(playheadX + 6, 0);
-      ctx.lineTo(playheadX, 10);
+      ctx.lineTo(playheadX, 12);
       ctx.closePath();
       ctx.fill();
     }
-  }, [segments, totalDurationMs, playheadMs, zoom, viewOffsetMs, selectedSegmentId, origWaveformPoints]);
+  }, [segments, totalDurationMs, playheadMs, zoom, viewOffsetMs, selectedSegmentId, origPeaks, dubPeaks, silences]);
 
-  // Handle click / seek / split
+  // Click & Pan Handlers
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const clickedMs = viewOffsetMs + (x / zoom) * 1000;
 
-    // Check if middle click or Alt-drag for pan
     if (e.button === 1 || e.altKey) {
       setIsPanning(true);
       panStartRef.current = { x: e.clientX, offset: viewOffsetMs };
@@ -240,7 +347,6 @@ export const TimelineCanvas: React.FC<Props> = ({
         onSplitSegment(String(target.id), clickedMs);
       }
     } else {
-      // Select segment if clicked inside Track 2
       const target = segments.find((s) => clickedMs >= s.start_ms && clickedMs <= s.end_ms);
       if (target) {
         onSelectSegment(String(target.id));
@@ -283,14 +389,14 @@ export const TimelineCanvas: React.FC<Props> = ({
         }`}
       />
 
-      {/* Hover Tooltip */}
+      {/* Hover Info Tooltip */}
       {hoveredSegment && (
         <div className="absolute top-2 right-4 bg-neutral-950/90 border border-neutral-700 rounded-lg px-3 py-1.5 text-xs text-neutral-200 pointer-events-none shadow-xl max-w-sm">
-          <span className="font-bold text-sky-400">[{hoveredSegment.id}]</span>{' '}
+          <span className="font-bold text-yellow-400">[{hoveredSegment.id}]</span>{' '}
           <span className="font-mono text-neutral-400">
-            {(hoveredSegment.start_ms / 1000).toFixed(1)}s - {(hoveredSegment.end_ms / 1000).toFixed(1)}s
+            {(hoveredSegment.start_ms / 1000).toFixed(2)}s - {(hoveredSegment.end_ms / 1000).toFixed(2)}s
           </span>
-          <p className="text-[11px] text-neutral-300 truncate mt-0.5">{hoveredSegment.original}</p>
+          <p className="text-[11px] text-neutral-300 truncate mt-0.5">{hoveredSegment.translated}</p>
         </div>
       )}
     </div>

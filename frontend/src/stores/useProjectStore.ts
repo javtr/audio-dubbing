@@ -32,6 +32,7 @@ interface ProjectState {
   updateSegment: (id: string | number, patch: Partial<Segment>) => void;
   saveCurrentMetadata: () => Promise<void>;
   revertToMaster: () => Promise<void>;
+  reloadProject: () => Promise<void>;
   checkTTS: () => Promise<void>;
 }
 
@@ -126,8 +127,19 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 
+  reloadProject: async () => {
+    const { currentProject } = get();
+    if (!currentProject) return;
+    try {
+      await get().selectProject(currentProject);
+    } catch (e) {
+      console.error('Error reloading project', e);
+    }
+  },
+
   checkTTS: async () => {
     const status = await api.checkTTSStatus();
     set({ isTTSConnected: status.connected, ttsUrl: status.url });
   },
 }));
+

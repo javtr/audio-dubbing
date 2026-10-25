@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useProjectStore } from '../stores/useProjectStore';
 import { TimelineCanvas } from '../components/studio/TimelineCanvas';
+import { SegmentRowTable } from '../components/studio/SegmentRowTable';
 import { useWebAudio } from '../hooks/useWebAudio';
+import { SilenceGap } from '../types';
 import * as api from '../api/client';
 import {
   Play,
@@ -15,8 +17,6 @@ import {
   Scissors,
   Split,
   Download,
-  Sliders,
-  CheckCircle,
   Sparkles,
 } from 'lucide-react';
 
@@ -26,17 +26,21 @@ export const StudioTab: React.FC = () => {
     segments,
     audioDurationMs,
     selectedSegmentId,
-    liveStatusMessage,
     setSelectedSegmentId,
     setSegments,
-    saveCurrentMetadata,
     revertToMaster,
   } = useProjectStore();
 
   const [zoom, setZoom] = useState(40); // Pixels per second
   const [viewOffsetMs, setViewOffsetMs] = useState(0);
   const [activeTool, setActiveTool] = useState<'cursor' | 'razor'>('cursor');
-  const [origWaveformPoints, setOrigWaveformPoints] = useState<number[]>([]);
+
+  // Waveforms and Silences State
+  const [origPeaks, setOrigPeaks] = useState<number[]>([]);
+  const [dubPeaks, setDubPeaks] = useState<number[]>([]);
+  const [silences, setSilences] = useState<SilenceGap[]>([]);
+
+  // Export Modal State
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportType, setExportType] = useState<'video' | 'audio'>('video');
   const [outputPath, setOutputPath] = useState('');
@@ -63,21 +67,34 @@ export const StudioTab: React.FC = () => {
     setIsMuteDub,
   } = useWebAudio(originalAudioUrl);
 
-  // Load waveform points on project change
-  useEffect(() => {
+  // Fetch all waveforms (both tracks) and silences
+  const loadWaveforms = useCallback(async () => {
     if (!currentProject) return;
-    api.getOriginalWaveform(currentProject, 1500)
-      .then((data) => setOrigWaveformPoints(data.points))
-      .catch((err) => console.error('Error fetching waveform', err));
-
-    // Suggest default export path
-    setOutputPath(`F:\\Desarrollo\\${currentProject}_doblado.mp4`);
+    try {
+      const data = await api.getAllWaveforms(currentProject, 1600);
+      setOrigPeaks(data.orig_peaks || []);
+      setDubPeaks(data.dub_peaks || []);
+      setSilences(data.silences || []);
+    } catch (err) {
+      console.error('Error fetching all waveforms', err);
+    }
   }, [currentProject]);
+
+  useEffect(() => {
+    loadWaveforms();
+    if (currentProject) {
+      setOutputPath(`F:\\Desarrollo\\${currentProject}_doblado.mp4`);
+    }
+  }, [currentProject, loadWaveforms]);
 
   // Spacebar toggle for Play/Pause
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'Space' && (e.target as HTMLElement).tagName !== 'TEXTAREA' && (e.target as HTMLElement).tagName !== 'INPUT') {
+      if (
+        e.code === 'Space' &&
+        (e.target as HTMLElement).tagName !== 'TEXTAREA' &&
+        (e.target as HTMLElement).tagName !== 'INPUT'
+      ) {
         e.preventDefault();
         if (isPlaying) pause();
         else play();
@@ -101,6 +118,7 @@ export const StudioTab: React.FC = () => {
     try {
       const res = await api.autoSplitSegment(currentProject, id);
       setSegments(res.metadata);
+      loadWaveforms();
     } catch (err: any) {
       alert(`Error al dividir: ${err.message}`);
     }
@@ -111,6 +129,7 @@ export const StudioTab: React.FC = () => {
     try {
       const res = await api.autoSplitSegment(currentProject, selectedSegmentId);
       setSegments(res.metadata);
+      loadWaveforms();
     } catch (err: any) {
       alert(`Error al auto-dividir: ${err.message}`);
     }
@@ -121,10 +140,17 @@ export const StudioTab: React.FC = () => {
     try {
       const res = await api.autoSplitAllSegments(currentProject);
       setSegments(res.metadata);
+      loadWaveforms();
       alert(`¡Se dividieron ${res.split_count} segmentos largos por pausas y comas!`);
     } catch (err: any) {
       alert(`Error al auto-dividir todos: ${err.message}`);
     }
+  };
+
+  const handleResetMaster = async () => {
+    if (!confirm('¿Deseas restaurar todos los segmentos a sus posiciones y audios iniciales?')) return;
+    await revertToMaster();
+    loadWaveforms();
   };
 
   const handleExport = async () => {
@@ -201,7 +227,7 @@ export const StudioTab: React.FC = () => {
           </button>
 
           <button
-            onClick={revertToMaster}
+            onClick={handleResetMaster}
             className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 text-neutral-300 transition flex items-center gap-1"
             title="Restablecer marcas de tiempo a la versión inicial maestra"
           >
@@ -245,7 +271,7 @@ export const StudioTab: React.FC = () => {
         </div>
       </div>
 
-      {/* Multitrack Canvas Timeline */}
+      {/* Multitrack Canvas Timeline with Dual Waveforms and Silence Gaps */}
       <div className="space-y-2">
         <TimelineCanvas
           segments={segments}
@@ -259,7 +285,9 @@ export const StudioTab: React.FC = () => {
           onSelectSegment={setSelectedSegmentId}
           onSplitSegment={handleSplitSegment}
           onViewOffsetChange={setViewOffsetMs}
-          origWaveformPoints={origWaveformPoints}
+          origPeaks={origPeaks}
+          dubPeaks={dubPeaks}
+          silences={silences}
         />
 
         {/* Horizontal Timeline Scrollbar */}
@@ -275,7 +303,7 @@ export const StudioTab: React.FC = () => {
         </div>
       </div>
 
-      {/* Bottom Transport & Mixer Controls */}
+      {/* Transport Bar & Volume Sliders */}
       <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 flex flex-wrap items-center justify-between gap-6">
         {/* Playback Controls & Timecode */}
         <div className="flex items-center gap-4">
@@ -295,7 +323,7 @@ export const StudioTab: React.FC = () => {
           </button>
 
           <div className="font-mono text-sm font-bold tracking-wider text-neutral-200 bg-neutral-950 px-3 py-1.5 rounded-lg border border-neutral-800">
-            <span className="text-sky-400">{formatTimecode(currentTimeMs)}</span>
+            <span className="text-yellow-400">{formatTimecode(currentTimeMs)}</span>
             <span className="text-neutral-600"> / </span>
             <span className="text-neutral-400">{formatTimecode(audioDurationMs)}</span>
           </div>
@@ -326,7 +354,7 @@ export const StudioTab: React.FC = () => {
 
           {/* Dubbed Track */}
           <div className="flex items-center gap-2 bg-neutral-950 px-3 py-1.5 rounded-lg border border-neutral-800">
-            <span className="font-bold text-emerald-400">Pista Doblada:</span>
+            <span className="font-bold text-orange-400">Pista Doblada:</span>
             <button
               onClick={() => setIsMuteDub(!isMuteDub)}
               className={`p-1 rounded ${isMuteDub ? 'text-rose-400' : 'text-neutral-400 hover:text-white'}`}
@@ -340,56 +368,15 @@ export const StudioTab: React.FC = () => {
               step={0.05}
               value={volDub}
               onChange={(e) => setVolDub(Number(e.target.value))}
-              className="w-16 accent-emerald-500 h-1 bg-neutral-800 cursor-pointer"
+              className="w-16 accent-orange-500 h-1 bg-neutral-800 cursor-pointer"
             />
             <span className="font-mono text-[10px] text-neutral-400 w-8">{Math.round(volDub * 100)}%</span>
           </div>
         </div>
       </div>
 
-      {/* Segment Summary Table */}
-      <div className="bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden text-xs">
-        <div className="px-4 py-2.5 bg-neutral-950 border-b border-neutral-800 font-bold text-neutral-400 flex items-center justify-between">
-          <span>Lista de Segmentos y Tiempos de Mezcla ({segments.length})</span>
-          <span className="text-[11px] font-normal text-neutral-500">Haz clic en un segmento para seleccionarlo</span>
-        </div>
-        <div className="max-h-60 overflow-y-auto divide-y divide-neutral-800/60 font-mono">
-          {segments.map((seg) => {
-            const isSelected = selectedSegmentId === String(seg.id);
-            const ratio = seg.current_speed_ratio || 1.0;
-            return (
-              <div
-                key={seg.id}
-                onClick={() => setSelectedSegmentId(String(seg.id))}
-                className={`px-4 py-2 flex items-center justify-between cursor-pointer transition ${
-                  isSelected ? 'bg-sky-500/15 text-white' : 'hover:bg-neutral-800/40 text-neutral-300'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <span className="font-bold text-neutral-400 w-16">[{seg.id}]</span>
-                  <span className="text-neutral-400">
-                    {(seg.start_ms / 1000).toFixed(2)}s - {(seg.end_ms / 1000).toFixed(2)}s
-                  </span>
-                  <span className="truncate max-w-md font-sans text-neutral-300">
-                    {seg.translated}
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span
-                    className={`font-bold px-2 py-0.5 rounded text-[11px] ${
-                      ratio >= 0.90 && ratio <= 1.20
-                        ? 'text-emerald-400 bg-emerald-500/10'
-                        : 'text-amber-400 bg-amber-500/10'
-                    }`}
-                  >
-                    {ratio.toFixed(2)}x
-                  </span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      {/* Segment Fine Tuning Table (SegmentRowTable) */}
+      <SegmentRowTable onRefreshWaveforms={loadWaveforms} />
 
       {/* Export Modal */}
       {showExportModal && (
