@@ -31,6 +31,13 @@ class TimelineController:
         self.drag_has_moved = False
         self.current_silences = []
 
+        # Control de rendimiento (Throttling y State Diffing)
+        self._last_motion_time = 0.0
+        self._last_dub_hover_text = None
+        self._last_dub_hover_color = None
+        self._last_orig_hover_text = None
+        self._last_orig_hover_color = None
+
     @property
     def silences(self):
         return self.current_silences
@@ -38,13 +45,6 @@ class TimelineController:
     @silences.setter
     def silences(self, val):
         self.current_silences = val or []
-
-        # Control de rendimiento (Throttling y State Diffing)
-        self._last_motion_time = 0.0
-        self._last_dub_hover_text = None
-        self._last_dub_hover_color = None
-        self._last_orig_hover_text = None
-        self._last_orig_hover_color = None
 
     def _emit_hover_dub(self, text, color):
         if text != self._last_dub_hover_text or color != self._last_dub_hover_color:
