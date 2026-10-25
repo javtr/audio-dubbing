@@ -56,18 +56,24 @@ class TabStudioView(ctk.CTkFrame):
         orig_header = ctk.CTkFrame(orig_box, fg_color="transparent")
         orig_header.pack(fill="x", padx=8, pady=(4, 2))
         ctk.CTkLabel(orig_header, text="Pista Original", font=("Arial", 12, "bold")).pack(side="left")
-        self.btn_mute_orig = ctk.CTkButton(orig_header, text="Mute", width=55, height=24, command=self._toggle_mute_orig)
-        self.btn_mute_orig.pack(side="left", padx=10)
-        self.slider_vol_orig = ctk.CTkSlider(orig_header, from_=0, to=2, width=120)
-        self.slider_vol_orig.set(1.0)
-        self.slider_vol_orig.pack(side="left", padx=5)
 
-        self.orig_canvas_frame = ctk.CTkFrame(orig_box, height=290)
+        # Altura de onda reducida un 30% (de 290 a 200)
+        self.orig_canvas_frame = ctk.CTkFrame(orig_box, height=200)
         self.orig_canvas_frame.pack(fill="x", expand=True, padx=5, pady=2)
         self.orig_canvas = TimelineCanvas(self.orig_canvas_frame, is_dubbed=False)
 
-        orig_footer = ctk.CTkFrame(orig_box, height=26, fg_color="#181818", corner_radius=4)
+        # Controles de Mute y Volumen situados DEBAJO de la onda original
+        orig_footer = ctk.CTkFrame(orig_box, height=28, fg_color="#181818", corner_radius=4)
         orig_footer.pack(fill="x", padx=5, pady=(1, 3))
+
+        self.btn_mute_orig = ctk.CTkButton(orig_footer, text="Mute", width=55, height=22, command=self._toggle_mute_orig)
+        self.btn_mute_orig.pack(side="left", padx=(8, 4), pady=2)
+
+        ctk.CTkLabel(orig_footer, text="Vol:", font=("Arial", 11), text_color="#aaaaaa").pack(side="left", padx=(2, 2))
+        self.slider_vol_orig = ctk.CTkSlider(orig_footer, from_=0, to=2, width=120)
+        self.slider_vol_orig.set(1.0)
+        self.slider_vol_orig.pack(side="left", padx=(2, 12), pady=2)
+
         self.lbl_orig_hover = ctk.CTkLabel(
             orig_footer,
             text="Pasa el cursor sobre la onda para inspeccionar el texto...",
@@ -75,7 +81,7 @@ class TabStudioView(ctk.CTkFrame):
             text_color="#64748b",
             anchor="w"
         )
-        self.lbl_orig_hover.pack(side="left", padx=10, fill="x", expand=True)
+        self.lbl_orig_hover.pack(side="left", padx=5, fill="x", expand=True)
 
         # 2. Pista Doblada
         dub_box = ctk.CTkFrame(wave_frame)
@@ -126,7 +132,8 @@ class TabStudioView(ctk.CTkFrame):
         )
         self.btn_reset_dub.pack(side="right", padx=10)
 
-        self.dub_canvas_frame = ctk.CTkFrame(dub_box, height=290)
+        # Altura de onda reducida un 30% (de 290 a 200)
+        self.dub_canvas_frame = ctk.CTkFrame(dub_box, height=200)
         self.dub_canvas_frame.pack(fill="x", expand=True, padx=5, pady=2)
         self.dub_canvas = TimelineCanvas(self.dub_canvas_frame, is_dubbed=True)
 
