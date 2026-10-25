@@ -17,27 +17,52 @@ class TimelineCanvas:
         self.playhead_line = None
         self.razor_line = None
         self.ghost_patch = None
+        
+        # Estado de rango visible (Zoom y Pan)
+        self.view_start_ms = 0
+        self.view_end_ms = None
 
-    def draw_waveform(self, samples, color, total_duration_ms, segments=None, selected_segment_id=None, playhead_ms=0, cut_color='#ff5252'):
-        """Renderiza la forma de onda y las marcas de cortes en el frame contenedor."""
+    def draw_waveform(self, samples, color, total_duration_ms, segments=None, silences=None, 
+                      selected_segment_id=None, playhead_ms=0, cut_color='#ff5252', view_range=None):
+        """Renderiza la forma de onda, silencios y marcas de cortes en el frame contenedor."""
         for w in self.master_frame.winfo_children():
             w.destroy()
 
-        self.fig, self.ax = plt.subplots(figsize=(4, 1.2), dpi=80)
-        self.fig.patch.set_facecolor('#2b2b2b')
-        self.ax.set_facecolor('#2b2b2b')
+        # Altura ampliada (2.2 pulgadas a 85 DPI = ~187 px de altura) para excelente visibilidad
+        self.fig, self.ax = plt.subplots(figsize=(6, 2.2), dpi=85)
+        self.fig.patch.set_facecolor('#202020')
+        self.ax.set_facecolor('#202020')
 
         # Eje X en milisegundos reales (0 a total_duration_ms)
         n = len(samples) if samples is not None else 0
         if n > 0:
             x_coords = np.linspace(0, total_duration_ms, n)
-            self.ax.plot(x_coords, samples, color=color, linewidth=0.6)
+            self.ax.plot(x_coords, samples, color=color, linewidth=0.75)
             max_val = max(abs(float(samples.max())), abs(float(samples.min()))) if n > 0 else 1.0
             if max_val > 0:
                 self.ax.set_ylim(-max_val * 1.15, max_val * 1.15)
-        self.ax.set_xlim(0, max(1, total_duration_ms))
 
-        # Marcas de cortes de cada frase
+        # Aplicar rango visible (Zoom / Scroll)
+        if view_range is not None:
+            self.view_start_ms, self.view_end_ms = view_range
+        elif self.view_end_ms is not None and self.view_end_ms > 0:
+            pass  # Mantener zoom actual si ya estaba configurado
+        else:
+            self.view_start_ms = 0
+            self.view_end_ms = max(1, total_duration_ms)
+
+        self.ax.set_xlim(self.view_start_ms, self.view_end_ms)
+
+        # 1. Zonas de Silencio Muerto (resaltado con rayas oblicuas rojas de advertencia)
+        if silences and self.is_dubbed:
+            for sil_item in silences:
+                sil_s = sil_item[0]
+                sil_e = sil_item[1]
+                if sil_e > sil_s:
+                    self.ax.axvspan(sil_s, sil_e, facecolor='#dc2626', alpha=0.32, hatch='///', edgecolor='#ef4444', linewidth=0.6, zorder=2)
+                    self.ax.axvline(x=sil_s, color='#ef4444', linestyle=':', linewidth=1.2, alpha=0.75, zorder=3)
+
+        # 2. Marcas de cortes de cada frase
         if segments:
             for seg_item in segments:
                 s_ms = seg_item[0]
@@ -47,24 +72,35 @@ class TimelineCanvas:
 
                 if is_selected:
                     # Resaltado amarillo neón para clip seleccionado
-                    self.ax.axvspan(s_ms, e_ms, color='#ffe600', alpha=0.22, zorder=3)
-                    self.ax.axvline(x=s_ms, color='#ffe600', linestyle='-', linewidth=2.0, zorder=6)
-                    self.ax.axvline(x=e_ms, color='#ffe600', linestyle='-', linewidth=2.0, zorder=6)
+                    self.ax.axvspan(s_ms, e_ms, color='#ffe600', alpha=0.22, zorder=4)
+                    self.ax.axvline(x=s_ms, color='#ffe600', linestyle='-', linewidth=2.0, zorder=7)
+                    self.ax.axvline(x=e_ms, color='#ffe600', linestyle='-', linewidth=2.0, zorder=7)
                 else:
-                    self.ax.axvspan(s_ms, e_ms, color='white', alpha=0.06)
-                    self.ax.axvline(x=s_ms, color=cut_color, linestyle='--', linewidth=0.85, alpha=0.85)
-                    self.ax.axvline(x=e_ms, color=cut_color, linestyle='--', linewidth=0.85, alpha=0.85)
+                    self.ax.axvspan(s_ms, e_ms, color='white', alpha=0.05, zorder=1)
+                    self.ax.axvline(x=s_ms, color=cut_color, linestyle='--', linewidth=0.85, alpha=0.85, zorder=5)
+                    self.ax.axvline(x=e_ms, color=cut_color, linestyle='--', linewidth=0.85, alpha=0.85, zorder=5)
 
-        # Cabezal de reproducción (Playhead)
+        # 3. Cabezal de reproducción (Playhead)
         self.playhead_line = self.ax.axvline(x=playhead_ms, color='#ffe600', linewidth=1.8, zorder=10)
 
         self.ax.axis('off')
-        plt.subplots_adjust(left=0.005, right=0.995, top=0.98, bottom=0.02)
+        plt.subplots_adjust(left=0.002, right=0.998, top=0.98, bottom=0.02)
 
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.master_frame)
         self.canvas.draw()
         self.canvas.get_tk_widget().pack(fill="both", expand=True)
         plt.close(self.fig)
+
+    def set_view_range(self, start_ms, end_ms):
+        """Actualiza el rango X visible sin reconstruir la figura (instantáneo a 60fps)."""
+        self.view_start_ms = start_ms
+        self.view_end_ms = end_ms
+        if self.ax and self.canvas:
+            try:
+                self.ax.set_xlim(start_ms, end_ms)
+                self.canvas.draw_idle()
+            except Exception:
+                pass
 
     def update_playhead(self, current_ms):
         """Mueve la línea vertical del playhead en tiempo real de forma ultra ligera."""
@@ -101,7 +137,7 @@ class TimelineCanvas:
         if not self.ax or not self.canvas:
             return
         self.remove_ghost_patch()
-        self.ghost_patch = self.ax.axvspan(start_ms, end_ms, color=color, alpha=alpha, zorder=5)
+        self.ghost_patch = self.ax.axvspan(start_ms, end_ms, color=color, alpha=alpha, zorder=6)
         self.canvas.draw_idle()
 
     def remove_ghost_patch(self):

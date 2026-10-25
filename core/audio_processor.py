@@ -127,7 +127,7 @@ class AudioProcessor:
 
         return final_orig.overlay(final_dub)
 
-    def get_waveform_data(self, audio_segment, max_points=1000):
+    def get_waveform_data(self, audio_segment, max_points=4000):
         """Genera datos de muestras normalizados para renderizar ondas en matplotlib."""
         if not audio_segment:
             return np.zeros(100)

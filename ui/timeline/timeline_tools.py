@@ -28,6 +28,11 @@ class TimelineController:
         self.orig_seg_end = 0
         self.orig_clip_raw_duration = 0
         self.drag_has_moved = False
+        self.current_silences = []
+
+    def set_silences(self, silences):
+        """Almacena los intervalos de silencio muerto calculados para interacción por cursor."""
+        self.current_silences = silences or []
 
     def set_tool_mode(self, mode):
         """Cambia entre modo 'SELECT' y 'RAZOR'."""
@@ -152,8 +157,17 @@ class TimelineController:
                 elif (s_ms + tol) < event.xdata < (e_ms - tol):
                     cursor_type = "fleur"
 
+        # Comprobar si el cursor está sobre una zona de silencio muerto
+        silence_hit = None
+        for (sil_s, sil_e, sil_id, sil_dur) in self.current_silences:
+            if sil_s <= event.xdata <= sil_e:
+                silence_hit = f"⚠️ [{sil_id}] Silencio muerto de {sil_dur:.1f}s sin voz (la voz terminó en {sil_s} ms, segmento dura hasta {sil_e} ms)"
+                break
+
         self.dub_canvas_comp.set_cursor(cursor_type)
-        if hovered_text:
+        if silence_hit:
+            self.cb.get("on_hover_dub", lambda t, c: None)(silence_hit, "#ff5252")
+        elif hovered_text:
             self.cb.get("on_hover_dub", lambda t, c: None)(hovered_text, "#ffb74d")
         else:
             self.cb.get("on_hover_dub", lambda t, c: None)(

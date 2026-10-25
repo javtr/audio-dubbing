@@ -24,12 +24,16 @@ class TabStudioView(ctk.CTkFrame):
         self.is_dragging = False
         self.segment_rows = {}
 
+        # Variables de Zoom y Scroll Horizontal
+        self.zoom_level = 1.0
+        self.view_offset_ms = 0.0
+
         self._build_ui()
         self._init_timeline_controller()
         self._bind_shortcuts()
 
     def _build_ui(self):
-        self.grid_rowconfigure(0, weight=3)
+        self.grid_rowconfigure(0, weight=4)
         self.grid_rowconfigure(1, weight=2)
         self.grid_columnconfigure(0, weight=1)
 
@@ -39,6 +43,7 @@ class TabStudioView(ctk.CTkFrame):
         wave_frame.grid_columnconfigure(0, weight=1)
         wave_frame.grid_rowconfigure(0, weight=1)
         wave_frame.grid_rowconfigure(1, weight=1)
+        wave_frame.grid_rowconfigure(2, weight=0)
 
         # 1. Pista Original
         orig_box = ctk.CTkFrame(wave_frame)
@@ -130,6 +135,40 @@ class TabStudioView(ctk.CTkFrame):
             anchor="w"
         )
         self.lbl_dub_hover.pack(side="left", padx=10, fill="x", expand=True)
+
+        # 3. Barra de Navegación y Zoom Horizontal
+        zoom_nav_frame = ctk.CTkFrame(wave_frame, height=36, fg_color="#181818", corner_radius=6)
+        zoom_nav_frame.grid(row=2, column=0, sticky="ew", padx=5, pady=(2, 4))
+        zoom_nav_frame.grid_columnconfigure(3, weight=1)
+
+        self.btn_zoom_out = ctk.CTkButton(
+            zoom_nav_frame, text="➖", width=32, height=26, font=("Arial", 12, "bold"),
+            fg_color="#2b2b2b", hover_color="#3d3d3d", command=self._on_zoom_out
+        )
+        self.btn_zoom_out.grid(row=0, column=0, padx=(8, 2), pady=4)
+
+        self.lbl_zoom = ctk.CTkLabel(
+            zoom_nav_frame, text="🔍 1.0x", width=62, font=("Consolas", 12, "bold"), text_color="#38bdf8"
+        )
+        self.lbl_zoom.grid(row=0, column=1, padx=2, pady=4)
+
+        self.btn_zoom_in = ctk.CTkButton(
+            zoom_nav_frame, text="➕", width=32, height=26, font=("Arial", 12, "bold"),
+            fg_color="#2b2b2b", hover_color="#3d3d3d", command=self._on_zoom_in
+        )
+        self.btn_zoom_in.grid(row=0, column=2, padx=(2, 10), pady=4)
+
+        self.h_scrollbar = ctk.CTkSlider(
+            zoom_nav_frame, from_=0, to=100, command=self._on_h_scroll, height=16
+        )
+        self.h_scrollbar.set(0)
+        self.h_scrollbar.grid(row=0, column=3, sticky="ew", padx=10, pady=4)
+
+        self.btn_zoom_fit = ctk.CTkButton(
+            zoom_nav_frame, text="Ajustar 1:1", width=85, height=26,
+            fg_color="#2b2b2b", hover_color="#3d3d3d", command=self._on_zoom_fit
+        )
+        self.btn_zoom_fit.grid(row=0, column=4, padx=(5, 10), pady=4)
 
         # --- ZONA MEDIA: SEGMENTOS GRANULARES ---
         self.mid_scroll = ctk.CTkScrollableFrame(self, label_text="Ajuste Fino de Segmentos")
@@ -368,29 +407,65 @@ class TabStudioView(ctk.CTkFrame):
 
         cur_pos = self.seek_slider.get()
 
+        # Calcular zonas de silencio muerto en los clips doblados
+        dub_silences = []
+        audios_dir = self.app.project_paths.get("audios_dir", "") if self.app.project_paths else ""
+        for s in self.app.processor.metadata:
+            s_ms = s.get("start_ms", 0)
+            e_ms = s.get("end_ms", 0)
+            fname = s.get("filename", "")
+            voice_dur = 0
+            if fname in self.app.processor.processed_segments:
+                voice_dur = len(self.app.processor.processed_segments[fname])
+            elif fname and audios_dir and os.path.exists(os.path.join(audios_dir, fname)):
+                try:
+                    fpath = os.path.join(audios_dir, fname)
+                    seg_audio = AudioSegment.from_file(fpath)
+                    voice_dur = len(seg_audio)
+                except Exception:
+                    voice_dur = 0
+
+            if voice_dur > 0:
+                voice_end = s_ms + voice_dur
+                if (e_ms - voice_end) > 250:
+                    dur_s = (e_ms - voice_end) / 1000.0
+                    dub_silences.append((voice_end, e_ms, s.get("id", ""), dur_s))
+
+        cur_vis_span = self.total_duration_ms / self.zoom_level
+        cur_view_range = (self.view_offset_ms, self.view_offset_ms + cur_vis_span)
+
         # Dibujar Onda Original
         orig_data = self.app.processor.get_waveform_data(self.app.processor.original_audio)
         self.orig_canvas.draw_waveform(
             orig_data, '#38bdf8', self.total_duration_ms,
-            segments=orig_segs_info, selected_segment_id=None, playhead_ms=cur_pos
+            segments=orig_segs_info, selected_segment_id=None, playhead_ms=cur_pos,
+            view_range=cur_view_range
         )
         self.orig_canvas.connect('button_press_event', self._on_orig_click)
         self.orig_canvas.connect('motion_notify_event', self.timeline_ctrl.on_orig_motion)
         self.orig_canvas.connect('figure_leave_event', self.timeline_ctrl.on_orig_leave)
+        self.orig_canvas.connect('scroll_event', self._on_canvas_scroll)
 
         # Dibujar Onda Doblada
         mix_data = self.app.processor.get_waveform_data(mix)
         self.dub_canvas.draw_waveform(
             mix_data, '#ff7f0e', self.total_duration_ms,
-            segments=dub_segs_info, selected_segment_id=self.timeline_ctrl.selected_segment_id, playhead_ms=cur_pos
+            segments=dub_segs_info, silences=dub_silences,
+            selected_segment_id=self.timeline_ctrl.selected_segment_id, playhead_ms=cur_pos,
+            view_range=cur_view_range
         )
         self.dub_canvas.connect('button_press_event', self.timeline_ctrl.on_timeline_press)
         self.dub_canvas.connect('motion_notify_event', self.timeline_ctrl.on_timeline_motion)
         self.dub_canvas.connect('button_release_event', self.timeline_ctrl.on_timeline_release)
         self.dub_canvas.connect('figure_leave_event', self.timeline_ctrl.on_timeline_leave)
+        self.dub_canvas.connect('scroll_event', self._on_canvas_scroll)
+
+        self.timeline_ctrl.set_silences(dub_silences)
 
         if self.timeline_ctrl.active_tool == "RAZOR":
             self.dub_canvas.set_cursor("crosshair")
+
+        self._apply_zoom_and_scroll()
 
     def _on_orig_click(self, event):
         if event.xdata is not None and 0 <= event.xdata <= self.total_duration_ms:
@@ -407,6 +482,88 @@ class TabStudioView(ctk.CTkFrame):
     def _update_playhead(self, current_ms):
         self.orig_canvas.update_playhead(current_ms)
         self.dub_canvas.update_playhead(current_ms)
+
+        # Si el playhead se sale de la pantalla visible mientras se reproduce, desplazar la vista suavemente
+        if self.zoom_level > 1.0 and self.app.playback.is_playing() and not self.is_dragging:
+            vis_span = self.total_duration_ms / self.zoom_level
+            if current_ms > (self.view_offset_ms + vis_span):
+                self.view_offset_ms = min(self.total_duration_ms - vis_span, current_ms - (vis_span * 0.15))
+                self._apply_zoom_and_scroll()
+            elif current_ms < self.view_offset_ms:
+                self.view_offset_ms = max(0, current_ms - (vis_span * 0.15))
+                self._apply_zoom_and_scroll()
+
+    def _apply_zoom_and_scroll(self):
+        if self.total_duration_ms <= 0:
+            return
+        vis_span = self.total_duration_ms / self.zoom_level
+        max_offset = max(0, self.total_duration_ms - vis_span)
+        self.view_offset_ms = max(0.0, min(self.view_offset_ms, max_offset))
+
+        x_min = self.view_offset_ms
+        x_max = x_min + vis_span
+
+        self.orig_canvas.set_view_range(x_min, x_max)
+        self.dub_canvas.set_view_range(x_min, x_max)
+
+        self.lbl_zoom.configure(text=f"🔍 {self.zoom_level:.1f}x")
+
+        if self.zoom_level > 1.0 and max_offset > 0:
+            self.h_scrollbar.configure(state="normal")
+            pct = (self.view_offset_ms / max_offset) * 100.0
+            self.h_scrollbar.set(pct)
+        else:
+            self.h_scrollbar.configure(state="disabled")
+            self.h_scrollbar.set(0)
+
+    def _on_zoom_in(self, target_center_ms=None):
+        if self.zoom_level < 8.0:
+            if target_center_ms is None:
+                cur_pos = self.seek_slider.get()
+                vis_span = self.total_duration_ms / self.zoom_level
+                if self.view_offset_ms <= cur_pos <= self.view_offset_ms + vis_span:
+                    target_center_ms = cur_pos
+                else:
+                    target_center_ms = self.view_offset_ms + (vis_span / 2)
+
+            self.zoom_level = min(8.0, self.zoom_level * 1.4)
+            new_span = self.total_duration_ms / self.zoom_level
+            self.view_offset_ms = target_center_ms - (new_span / 2)
+            self._apply_zoom_and_scroll()
+
+    def _on_zoom_out(self, target_center_ms=None):
+        if self.zoom_level > 1.0:
+            if target_center_ms is None:
+                target_center_ms = self.view_offset_ms + (self.total_duration_ms / self.zoom_level) / 2
+
+            self.zoom_level = max(1.0, self.zoom_level / 1.4)
+            if self.zoom_level == 1.0:
+                self.view_offset_ms = 0.0
+            else:
+                new_span = self.total_duration_ms / self.zoom_level
+                self.view_offset_ms = target_center_ms - (new_span / 2)
+            self._apply_zoom_and_scroll()
+
+    def _on_zoom_fit(self):
+        self.zoom_level = 1.0
+        self.view_offset_ms = 0.0
+        self._apply_zoom_and_scroll()
+
+    def _on_h_scroll(self, val):
+        if self.zoom_level <= 1.0:
+            return
+        vis_span = self.total_duration_ms / self.zoom_level
+        max_offset = max(0, self.total_duration_ms - vis_span)
+        self.view_offset_ms = (float(val) / 100.0) * max_offset
+        self._apply_zoom_and_scroll()
+
+    def _on_canvas_scroll(self, event):
+        if event.xdata is None:
+            return
+        if getattr(event, "button", None) == 'up':
+            self._on_zoom_in(target_center_ms=event.xdata)
+        elif getattr(event, "button", None) == 'down':
+            self._on_zoom_out(target_center_ms=event.xdata)
 
     def _on_seek_change(self, val):
         self._update_time_label()

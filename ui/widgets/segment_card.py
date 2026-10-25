@@ -28,21 +28,39 @@ class SegmentCard(ctk.CTkFrame):
         self.lbl_id = ctk.CTkLabel(self, text=f"ID: {self.data.get('id', 'seg')}", font=("Arial", 11, "bold"), text_color="#aaaaaa")
         self.lbl_id.grid(row=0, column=0, padx=10, pady=(8, 0), sticky="nw")
 
-        # Contenido de texto
+        # Contenido de texto en 2 columnas lado a lado (Español a la izquierda, Traducción a la derecha)
         text_frame = ctk.CTkFrame(self, fg_color="transparent")
         text_frame.grid(row=0, column=1, rowspan=2, padx=10, pady=5, sticky="nsew")
         text_frame.grid_columnconfigure(0, weight=1)
+        text_frame.grid_columnconfigure(1, weight=1)
 
-        self.lbl_orig = ctk.CTkLabel(text_frame, text=self.data.get('original', ''), font=("Arial", 12, "italic"), wraplength=650, justify="left")
-        self.lbl_orig.grid(row=0, column=0, sticky="ew")
+        # Columna Izquierda: Español (Seleccionable, Copiable y Editable)
+        col_orig = ctk.CTkFrame(text_frame, fg_color="transparent")
+        col_orig.grid(row=0, column=0, padx=(0, 6), sticky="nsew")
+        col_orig.grid_columnconfigure(0, weight=1)
 
-        self.txt_translated = ctk.CTkTextbox(text_frame, height=55, font=("Arial", 13))
-        self.txt_translated.grid(row=1, column=0, pady=(5, 0), sticky="ew")
+        lbl_header_orig = ctk.CTkLabel(col_orig, text="Español (Original):", font=("Arial", 11, "bold"), text_color="#94a3b8")
+        lbl_header_orig.pack(anchor="w", pady=(0, 2))
+
+        self.txt_original = ctk.CTkTextbox(col_orig, height=65, font=("Arial", 12), fg_color="#1e1e1e", border_width=1, border_color="#3a3a3a")
+        self.txt_original.pack(fill="both", expand=True)
+        self.txt_original.insert("1.0", self.data.get('original', ''))
+
+        # Columna Derecha: Traducción (Editable)
+        col_trans = ctk.CTkFrame(text_frame, fg_color="transparent")
+        col_trans.grid(row=0, column=1, padx=(6, 0), sticky="nsew")
+        col_trans.grid_columnconfigure(0, weight=1)
+
+        lbl_header_trans = ctk.CTkLabel(col_trans, text="Traducción Doblada:", font=("Arial", 11, "bold"), text_color="#60a5fa")
+        lbl_header_trans.pack(anchor="w", pady=(0, 2))
+
+        self.txt_translated = ctk.CTkTextbox(col_trans, height=65, font=("Arial", 12))
+        self.txt_translated.pack(fill="both", expand=True)
         self.txt_translated.insert("1.0", self.data.get('translated', ''))
 
         # Indicador de balance y densidad de palabras: generadas / originales (pct%) | clasificacion
         self.lbl_density = ctk.CTkLabel(text_frame, text="", font=("Arial", 11, "bold"), anchor="w", justify="left")
-        self.lbl_density.grid(row=2, column=0, pady=(3, 0), sticky="w")
+        self.lbl_density.grid(row=1, column=0, columnspan=2, pady=(4, 0), sticky="w")
 
         # Advertencia de tiempos si existen anomalías
         if self.anomalies:
@@ -54,7 +72,7 @@ class SegmentCard(ctk.CTkFrame):
                 wraplength=650,
                 justify="left"
             )
-            self.lbl_timing_warning.grid(row=3, column=0, pady=(3, 0), sticky="w")
+            self.lbl_timing_warning.grid(row=2, column=0, columnspan=2, pady=(2, 0), sticky="w")
         else:
             self.lbl_timing_warning = None
 
@@ -78,6 +96,7 @@ class SegmentCard(ctk.CTkFrame):
         self.opt_tone.pack(side="left", padx=5)
 
         # Eventos para cálculo de densidad en tiempo real
+        self.txt_original.bind("<KeyRelease>", lambda e: self.update_density_metrics())
         self.txt_translated.bind("<KeyRelease>", lambda e: self.update_density_metrics())
         self.ent_start.bind("<KeyRelease>", lambda e: self.update_density_metrics())
         self.ent_end.bind("<KeyRelease>", lambda e: self.update_density_metrics())
@@ -105,7 +124,7 @@ class SegmentCard(ctk.CTkFrame):
         self.update_status()
 
     def update_density_metrics(self):
-        orig_text = self.data.get('original', '').strip()
+        orig_text = self.txt_original.get("1.0", "end-1c").strip()
         orig_words = len(orig_text.split()) if orig_text else 0
 
         trans_text = self.txt_translated.get("1.0", "end-1c").strip()
@@ -171,6 +190,7 @@ class SegmentCard(ctk.CTkFrame):
 
     def _save_changes(self):
         try:
+            self.data['original'] = self.txt_original.get("1.0", "end-1c").strip()
             self.data['translated'] = self.txt_translated.get("1.0", "end-1c").strip()
             self.data['start_ms'] = int(self.ent_start.get())
             self.data['end_ms'] = int(self.ent_end.get())
