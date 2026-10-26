@@ -1807,46 +1807,140 @@ class AutoSplitAllRequest(BaseModel):
 
 @app.post("/api/timeline/auto-split-all")
 def auto_split_all_segments(req: AutoSplitAllRequest):
+    """
+    Recorre todos los segmentos del proyecto y aplica la redistribución inteligente
+    de silencios a todos aquellos que tengan un silencio final > 2000 ms.
+    """
+    import shutil
+    import subprocess
+    from pydub import AudioSegment
+    from core.audio_processor import redistribute_segment_silence
+
+    paths = pm.get_project_paths(req.project)
     metadata = pm.load_project_metadata(req.project)
-    expanded = []
-    split_count = 0
+    if not metadata:
+        raise HTTPException(status_code=404, detail="No hay segmentos en el proyecto.")
+
+    audios_dir = paths.get("audios_dir", "")
+    raw_dir = os.path.join(audios_dir, "raw")
+    os.makedirs(raw_dir, exist_ok=True)
+    temp_dir = os.path.join(paths["root"], "temp")
+    os.makedirs(temp_dir, exist_ok=True)
+
+    processed_count = 0
+    skipped_count = 0
+    details = []
+
+    print(f"[AUTO-SPLIT-ALL] Analizando {len(metadata)} segmentos en proyecto '{req.project}'...")
 
     for seg in metadata:
+        sid = str(seg.get("id"))
+        fname = seg.get("filename", "")
+        if not fname:
+            skipped_count += 1
+            continue
+
+        raw_path = os.path.join(raw_dir, fname)
+        current_path = os.path.join(audios_dir, fname)
+
+        # Respaldar en raw/ si aún no existe
+        if not os.path.exists(raw_path) and os.path.exists(current_path):
+            shutil.copy2(current_path, raw_path)
+            os.utime(raw_path, None)
+
+        base_raw = raw_path if os.path.exists(raw_path) else current_path
+        if not os.path.exists(base_raw):
+            skipped_count += 1
+            continue
+
         target_span = seg.get("end_ms", 0) - seg.get("start_ms", 0)
-        orig_text = seg.get("original", "").strip()
-        words = orig_text.split()
 
-        # Criteria for auto-split: > 14 words or duration > 10s and contains comma/connector
-        if len(words) >= 14 or target_span >= 10000:
-            part1_es, part2_es, part1_tr, part2_tr = aligner._split_segment_text(seg, 0.5)
-            if part1_es and part2_es and part1_tr and part2_tr:
-                base_id = str(seg.get("id", "seg"))
-                mid_time = int((seg.get("start_ms", 0) + seg.get("end_ms", 0)) / 2)
+        # 1. Verificar si el audio activo ya tiene silencio final <= 2000 ms (ya optimizado o no califica)
+        active_len = len(AudioSegment.from_file(current_path)) if os.path.exists(current_path) else seg.get("clip_duration_ms", 0)
+        current_silence_at_end = target_span - active_len
 
-                seg_a = copy.deepcopy(seg)
-                seg_a["id"] = f"{base_id}_a"
-                seg_a["original"] = part1_es
-                seg_a["translated"] = part1_tr
-                seg_a["end_ms"] = mid_time
+        if current_silence_at_end <= 2000:
+            skipped_count += 1
+            continue
 
-                seg_b = copy.deepcopy(seg)
-                seg_b["id"] = f"{base_id}_b"
-                seg_b["original"] = part2_es
-                seg_b["translated"] = part2_tr
-                seg_b["start_ms"] = mid_time
+        # 2. Preparar el audio base desde raw/ respetando el ratio configurado
+        target_ratio = seg.get("speed_ratio") or seg.get("current_speed_ratio") or 1.0
+        raw_len = len(AudioSegment.from_file(base_raw))
+        temp_stretched = None
 
-                expanded.extend([seg_a, seg_b])
-                split_count += 1
-                continue
+        if abs(target_ratio - 1.0) >= 0.005:
+            temp_stretched = os.path.join(temp_dir, f"split_all_{target_ratio:.3f}_{fname}")
+            atempo_filter = build_atempo_filter(target_ratio)
+            cmd = [
+                "ffmpeg", "-y", "-i", base_raw,
+                "-filter:a", atempo_filter,
+                temp_stretched
+            ]
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            source_audio = temp_stretched
+            audio_dur_effective = len(AudioSegment.from_file(temp_stretched))
+        else:
+            source_audio = base_raw
+            audio_dur_effective = raw_len
 
-        expanded.append(seg)
+        # Verificar si con el audio base estirado aún hay silencio > 2000 ms
+        silence_to_redistribute = target_span - audio_dur_effective
+        if silence_to_redistribute <= 2000:
+            skipped_count += 1
+            if temp_stretched and os.path.exists(temp_stretched):
+                try: os.remove(temp_stretched)
+                except Exception: pass
+            continue
 
-    for i, s in enumerate(expanded):
-        s["filename"] = f"segment_{i:03d}.wav"
+        # 3. Ejecutar redistribución inteligente
+        try:
+            new_audio, info = redistribute_segment_silence(source_audio, target_span)
+            new_audio.export(current_path, format="wav")
+            os.utime(current_path, None)
 
-    pm.save_project_metadata(req.project, expanded)
-    val = TimingValidator.validate(expanded)
-    return {"status": "ok", "split_count": split_count, "metadata": expanded, "validation": val}
+            new_len = len(new_audio)
+            seg["raw_duration_ms"] = raw_len
+            seg["clip_duration_ms"] = new_len
+            seg["speed_ratio"] = target_ratio
+            seg["current_speed_ratio"] = target_ratio
+            seg["is_manual_ratio"] = True
+
+            processed_count += 1
+            details.append({
+                "id": sid,
+                "silence_before_ms": silence_to_redistribute,
+                "info": info
+            })
+            print(f"[AUTO-SPLIT-ALL] Segmento [{sid}] optimizado: silencio {silence_to_redistribute}ms redistribuido (k_div={info.get('k_divisions')}).")
+        except Exception as e:
+            print(f"[AUTO-SPLIT-ALL] Error en segmento [{sid}]: {str(e)}")
+            skipped_count += 1
+        finally:
+            if temp_stretched and os.path.exists(temp_stretched):
+                try: os.remove(temp_stretched)
+                except Exception: pass
+
+    # Guardar metadatos consolidados
+    pm.save_project_metadata(req.project, metadata)
+
+    # Invalidar caché de ondas de dub y regenerar mezcla completa una sola vez
+    invalidate_waveform_cache(req.project, "dub")
+    audio_path = paths.get("audio_file")
+    processor = AudioProcessor(audio_path, audios_dir, metadata)
+    export_dubbed_mix_versioned(processor, paths, req.project)
+
+    val = TimingValidator.validate(metadata)
+    print(f"[AUTO-SPLIT-ALL] Finalizado: {processed_count} segmentos redistribuidos, {skipped_count} omitidos.")
+
+    return {
+        "status": "ok",
+        "processed_count": processed_count,
+        "skipped_count": skipped_count,
+        "total_segments": len(metadata),
+        "details": details,
+        "metadata": metadata,
+        "validation": val
+    }
 
 
 # ==================== EXPORT SERVICE ====================

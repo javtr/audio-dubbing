@@ -220,10 +220,23 @@ export const StudioTab: React.FC = () => {
     try {
       const res = await api.autoSplitAllSegments(currentProject);
       setSegments(res.metadata);
-      loadWaveforms();
-      alert(`¡Se dividieron ${res.split_count} segmentos largos por pausas y comas!`);
+      setDubbedAudioVersion(Date.now());
+      await loadWaveforms();
+
+      if (res.processed_count > 0) {
+        alert(
+          `✨ Proceso por lotes finalizado con éxito:\n\n` +
+          `• Se optimizaron ${res.processed_count} segmento(s) que tenían silencios mayores a 2.0s.\n` +
+          `• ${res.skipped_count} segmento(s) contaban con silencios adecuados o no requirieron ajuste.`
+        );
+      } else {
+        alert(
+          `ℹ️ No se requirieron ajustes:\n\n` +
+          `Todos los segmentos (${res.total_segments}) tienen silencios menores a 2.0s o ya están optimizados.`
+        );
+      }
     } catch (err: any) {
-      alert(`Error al auto-dividir todos: ${err.message}`);
+      alert(`Error al auto-dividir todos los segmentos: ${err?.response?.data?.detail || err.message}`);
     }
   };
 
@@ -337,6 +350,7 @@ export const StudioTab: React.FC = () => {
           <button
             onClick={handleAutoSplitAll}
             className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition flex items-center gap-1"
+            title="Detecta automáticamente todas las frases con silencios mayores a 2.0s y redistribuye sus pausas en lote"
           >
             <Sparkles className="w-3.5 h-3.5" />
             <span>Auto-dividir todas</span>
