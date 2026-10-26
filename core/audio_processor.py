@@ -89,8 +89,8 @@ class AudioProcessor:
             raw_r = actual_duration / float(target_duration)
             if raw_r > 1.0:
                 ratio = raw_r
-            elif raw_r < 0.85:
-                ratio = 0.85
+            elif raw_r < 0.87:
+                ratio = 0.87
             else:
                 ratio = raw_r
 

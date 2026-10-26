@@ -192,7 +192,7 @@ export const SegmentRowTable: React.FC<Props> = ({ onRefreshWaveforms, onOverlap
     }
   };
 
-  // 2. Calcular automáticamente los ratios óptimos bajo las 2 directrices (mín 0.8x y 0 traslapes)
+  // 2. Calcular automáticamente los ratios óptimos bajo las 2 directrices (mín 0.87x y 0 traslapes)
   const handleAutoRatios = async () => {
     if (!currentProject) return;
     setIsCalculatingAuto(true);
@@ -282,12 +282,12 @@ export const SegmentRowTable: React.FC<Props> = ({ onRefreshWaveforms, onOverlap
             <span>Aplicar Cambios</span>
           </button>
 
-          {/* BOTON 2: RATIOS AUTOMATICOS (SIN TRASLAPES & MIN 0.8x) */}
+          {/* BOTON 2: RATIOS AUTOMATICOS (SIN TRASLAPES & MIN 0.87x) */}
           <button
             onClick={handleAutoRatios}
             disabled={isApplyingManual || isCalculatingAuto}
             className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-violet-600 hover:bg-violet-500 text-white transition flex items-center gap-1.5 shadow-md shadow-violet-600/20 disabled:opacity-50"
-            title="Calcula automáticamente las velocidades óptimas: ratio mín. 0.8x y 0 traslapes entre audios"
+            title="Calcula automáticamente las velocidades óptimas: ratio mín. 0.87x y 0 traslapes entre audios"
           >
             {isCalculatingAuto ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
             <span>Ratios Automáticos</span>
@@ -305,7 +305,7 @@ export const SegmentRowTable: React.FC<Props> = ({ onRefreshWaveforms, onOverlap
           const ratio = localRatios[segId] ?? seg.speed_ratio ?? seg.current_speed_ratio ?? 1.0;
           const startVal = localStarts[segId] ?? seg.start_ms;
 
-          const isGoodRatio = ratio >= 0.90 && ratio <= 1.20;
+          const isGoodRatio = ratio >= 0.87 && ratio <= 1.20;
 
           const colInfo = overlapAnalysis.segmentCollisions[segId];
           const hasOutgoingOverlap = Boolean(colInfo && colInfo.outgoing.length > 0);

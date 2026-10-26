@@ -121,7 +121,7 @@ def build_atempo_filter(ratio: float) -> str:
 
 
 def calculate_segment_speed_ratio(raw_duration_ms: int, target_span_ms: int, manual_ratio: Optional[float] = None) -> float:
-    """Calcula ratio de velocidad con límite inferior 0.80x y sin límite superior."""
+    """Calcula ratio de velocidad con límite inferior 0.87x y sin límite superior."""
     if manual_ratio is not None and manual_ratio > 0:
         return round(float(manual_ratio), 2)
     if target_span_ms <= 0 or raw_duration_ms <= 0:
@@ -133,9 +133,9 @@ def calculate_segment_speed_ratio(raw_duration_ms: int, target_span_ms: int, man
     if raw_ratio > 1.0:
         return round(raw_ratio, 2)
     
-    # Si necesita desacelerar (< 1.0): NUNCA bajar de 0.80x
-    if raw_ratio < 0.80:
-        return 0.80
+    # Si necesita desacelerar (< 1.0): NUNCA bajar de 0.87x
+    if raw_ratio < 0.87:
+        return 0.87
         
     return round(raw_ratio, 2)
 
@@ -1411,7 +1411,7 @@ def auto_calculate_ratios(req: AutoRatiosRequest):
     audio_path = paths.get("audio_file")
     audios_dir = paths.get("audios_dir")
     
-    print(f"[AUTO-RATIOS] Calculando ratios automáticos (mín 0.8x y 0 traslapes) para proyecto '{req.project}'...")
+    print(f"[AUTO-RATIOS] Calculando ratios automáticos (mín 0.87x y 0 traslapes) para proyecto '{req.project}'...")
     
     # 1. Asegurar orden cronológico por start_ms
     metadata.sort(key=lambda s: s.get("start_ms", 0))
@@ -1460,10 +1460,10 @@ def auto_calculate_ratios(req: AutoRatiosRequest):
         if needed_ratio > 1.0:
             final_ratio = math.ceil(needed_ratio * 100) / 100.0
         else:
-            # Directriz 1: Nunca tener ratio menor a 0.80x
+            # Directriz 1: Nunca tener ratio menor a 0.87x
             target_span = seg.get("end_ms", 0) - cur_start
             slot_ratio = (raw_dur / float(target_span)) if target_span > 0 else 1.0
-            final_ratio = max(0.80, min(1.0, round(slot_ratio, 2)))
+            final_ratio = max(0.87, min(1.0, round(slot_ratio, 2)))
 
         process_segment_from_raw(
             paths=paths,
