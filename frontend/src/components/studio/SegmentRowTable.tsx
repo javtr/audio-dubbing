@@ -54,9 +54,7 @@ export const SegmentRowTable: React.FC<Props> = ({ onRefreshWaveforms, onOverlap
       const nextRatios = { ...prev };
       segments.forEach((s) => {
         const sid = String(s.id);
-        if (nextRatios[sid] === undefined) {
-          nextRatios[sid] = s.speed_ratio ?? s.current_speed_ratio ?? 1.0;
-        }
+        nextRatios[sid] = s.speed_ratio ?? s.current_speed_ratio ?? 1.0;
       });
       return nextRatios;
     });

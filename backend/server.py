@@ -1676,9 +1676,14 @@ def delete_segment(req: DeleteSegmentRequest):
 class AutoSplitRequest(BaseModel):
     project: str
     segment_id: str
+    ratio: Optional[float] = None
 
 @app.post("/api/timeline/auto-split")
 def auto_split_segment(req: AutoSplitRequest):
+    import shutil
+    import subprocess
+    from pydub import AudioSegment
+
     paths = pm.get_project_paths(req.project)
     metadata = pm.load_project_metadata(req.project)
     idx = next((i for i, s in enumerate(metadata) if str(s.get("id")) == str(req.segment_id)), None)
@@ -1688,13 +1693,47 @@ def auto_split_segment(req: AutoSplitRequest):
     seg = metadata[idx]
     target_span = seg.get("end_ms", 0) - seg.get("start_ms", 0)
 
-    # Buscar el audio original limpio en raw/ si existe, o en audios/
-    raw_path = os.path.join(paths["audios_dir"], "raw", seg["filename"])
-    current_path = os.path.join(paths["audios_dir"], seg["filename"])
-    source_audio = raw_path if os.path.exists(raw_path) else current_path
+    # 1. Determinar el ratio deseado por el usuario (preservar ratio personalizado ej. 0.9x)
+    target_ratio = req.ratio if req.ratio is not None else (
+        seg.get("speed_ratio") or seg.get("current_speed_ratio") or 1.0
+    )
 
-    if not os.path.exists(source_audio):
+    # 2. Rutas del archivo de audio
+    audios_dir = paths.get("audios_dir", "")
+    raw_dir = os.path.join(audios_dir, "raw")
+    os.makedirs(raw_dir, exist_ok=True)
+
+    fname = seg.get("filename", "")
+    raw_path = os.path.join(raw_dir, fname)
+    current_path = os.path.join(audios_dir, fname)
+
+    # Salvaguardar en raw/ si aún no existe
+    if not os.path.exists(raw_path) and os.path.exists(current_path):
+        shutil.copy2(current_path, raw_path)
+        os.utime(raw_path, None)
+
+    base_raw = raw_path if os.path.exists(raw_path) else current_path
+    if not os.path.exists(base_raw):
         raise HTTPException(status_code=400, detail="El segmento aún no tiene audio doblado generado.")
+
+    raw_len = len(AudioSegment.from_file(base_raw))
+
+    # 3. Preparar el audio base respetando el ratio configurado por el usuario
+    temp_stretched_file = None
+    if abs(target_ratio - 1.0) >= 0.005:
+        temp_dir = os.path.join(paths["root"], "temp")
+        os.makedirs(temp_dir, exist_ok=True)
+        temp_stretched_file = os.path.join(temp_dir, f"split_stretch_{target_ratio:.3f}_{fname}")
+        atempo_filter = build_atempo_filter(target_ratio)
+        cmd = [
+            "ffmpeg", "-y", "-i", base_raw,
+            "-filter:a", atempo_filter,
+            temp_stretched_file
+        ]
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        source_audio = temp_stretched_file
+    else:
+        source_audio = base_raw
 
     try:
         from core.audio_processor import redistribute_segment_silence
@@ -1702,12 +1741,14 @@ def auto_split_segment(req: AutoSplitRequest):
 
         # Exportar el audio con silencios redistribuidos a audios/
         new_audio.export(current_path, format="wav")
+        os.utime(current_path, None)
 
-        # Actualizar metadatos del segmento
+        # Actualizar metadatos del segmento PRESERVANDO fielmente el ratio del usuario
         new_len = len(new_audio)
+        seg["raw_duration_ms"] = raw_len
         seg["clip_duration_ms"] = new_len
-        seg["speed_ratio"] = 1.0
-        seg["current_speed_ratio"] = 1.0
+        seg["speed_ratio"] = target_ratio
+        seg["current_speed_ratio"] = target_ratio
         seg["is_manual_ratio"] = True
 
         pm.save_project_metadata(req.project, metadata)
@@ -1730,6 +1771,12 @@ def auto_split_segment(req: AutoSplitRequest):
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al redistribuir silencios: {str(e)}")
+    finally:
+        if temp_stretched_file and os.path.exists(temp_stretched_file):
+            try:
+                os.remove(temp_stretched_file)
+            except Exception:
+                pass
 
 
 class AutoSplitAllRequest(BaseModel):

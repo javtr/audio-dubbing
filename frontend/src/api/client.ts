@@ -110,10 +110,11 @@ export const stopTTS = async () => {
   return res.data;
 };
 
-export const autoSplitSegment = async (project: string, segmentId: string | number) => {
+export const autoSplitSegment = async (project: string, segmentId: string | number, ratio?: number) => {
   const res = await api.post('/timeline/auto-split', {
     project,
     segment_id: String(segmentId),
+    ratio: ratio !== undefined ? ratio : undefined,
   });
   return res.data;
 };

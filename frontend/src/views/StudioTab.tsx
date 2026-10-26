@@ -192,7 +192,9 @@ export const StudioTab: React.FC = () => {
   const handleAutoSplitSelected = async () => {
     if (!currentProject || !selectedSegmentId) return;
     try {
-      const res = await api.autoSplitSegment(currentProject, selectedSegmentId);
+      const selectedSeg = segments.find((s) => String(s.id) === String(selectedSegmentId));
+      const currentRatio = selectedSeg?.speed_ratio ?? selectedSeg?.current_speed_ratio;
+      const res = await api.autoSplitSegment(currentProject, selectedSegmentId, currentRatio);
       setSegments(res.metadata);
       setDubbedAudioVersion(Date.now());
       await loadWaveforms();
