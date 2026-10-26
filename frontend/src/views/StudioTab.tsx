@@ -197,15 +197,16 @@ export const StudioTab: React.FC = () => {
       setDubbedAudioVersion(Date.now());
       await loadWaveforms();
       if (res.info) {
-        if (res.info.mode === 'internal_pauses') {
-          alert(
-            `¡Silencios redistribuidos con éxito!\nSe detectaron ${res.info.k_pauses} pausa(s) interna(s).\nSe intercalaron ${(res.info.silence_added_per_pause_ms / 1000).toFixed(2)}s en cada una, dejando ${(res.info.silence_left_at_end_ms / 1000).toFixed(1)}s de respiro al final.`
-          );
-        } else {
-          alert(
-            `¡Sin pausas internas detectadas en el audio!\nSe redistribuyó el silencio en 2 mitades iguales: ${(res.info.silence_start_ms / 1000).toFixed(2)}s al inicio y ${(res.info.silence_end_ms / 1000).toFixed(2)}s al final.`
-          );
+        const { k_pauses, silence_added_per_pause_ms, silence_start_ms, silence_end_ms } = res.info;
+        let msg = `✨ Silencios redistribuidos con éxito:\n`;
+        if (k_pauses > 0 && silence_added_per_pause_ms > 0) {
+          msg += `• ${k_pauses} pausa(s) interna(s): +${(silence_added_per_pause_ms / 1000).toFixed(2)}s en cada una (máx 1.5s).\n`;
         }
+        if (silence_start_ms > 0) {
+          msg += `• Silencio al inicio: +${(silence_start_ms / 1000).toFixed(2)}s.\n`;
+        }
+        msg += `• Silencio al final (cola): ${(silence_end_ms / 1000).toFixed(2)}s.`;
+        alert(msg);
       }
     } catch (err: any) {
       alert(`Aviso: ${err?.response?.data?.detail || err.message}`);

@@ -301,48 +301,40 @@ class AudioProcessor:
 
 def redistribute_segment_silence(source_audio_path: str, target_span_ms: int):
     """
-    Toma el archivo de audio del segmento y el tiempo disponible (target_span_ms = end_ms - start_ms).
-    Redistribuye el silencio excesivo al final protegiendo la prosodia natural:
-    1. Si silencio_final <= 2000 ms, lanza ValueError (no requiere redistribución).
-    2. Busca pausas internas REALES (detect_silence con min_silence_len >= 500 ms).
-    3. Si K >= 1 pausas:
-       - Limita a un máximo de 2 pausas (máximo 3 divisiones de audio).
-       - Si se detectan más de 2 pausas, selecciona las 2 más largas y las ordena cronológicamente.
-       - Reserva 1000 ms de silencio al final como aire natural.
-       - Silencio a redistribuir = silencio_final - 1000 ms.
-       - Silencio por pausa = silencio_redistribuir // K.
-       - Intercala ese silencio en los puntos medios de cada pausa seleccionada.
-    4. Si K == 0 pausas (no hay pausas >= 500 ms):
-       - Reparte simétricamente 50/50: la mitad al inicio y la mitad al final.
-       - Cero cortes a la voz hablada.
+    Redistribuye el silencio de un segmento bajo directrices inteligentes:
+    1. Requiere silencio total > 2000 ms.
+    2. Detecta pausas naturales reales (>= 500 ms), limitando a máximo 2 cortes (3 partes).
+    3. Silencio intermedio acotado:
+       - S_pausa = min(1500 ms, (silencio_total - reserva_minima) // K)
+    4. Evaluación del residuo:
+       - Si Residuo > 3000 ms: Mitad al inicio y mitad al final.
+       - Si Residuo <= 3000 ms: Todo al final.
     """
     if not os.path.exists(source_audio_path):
         raise FileNotFoundError(f"Audio no encontrado: {source_audio_path}")
 
     audio = AudioSegment.from_file(source_audio_path)
     audio_len = len(audio)
-    silencio_final_ms = target_span_ms - audio_len
+    silencio_total_ms = target_span_ms - audio_len
 
-    if silencio_final_ms <= 2000:
+    if silencio_total_ms <= 2000:
         raise ValueError(
-            f"El segmento no tiene un silencio al final mayor a 2.0s ({silencio_final_ms/1000:.2f}s detectado). "
+            f"El segmento no tiene un silencio al final mayor a 2.0s ({silencio_total_ms/1000:.2f}s detectado). "
             "No requiere redistribución."
         )
 
-    # Detectar silencios con un umbral relativo a la energía del audio
+    # 1. Detección de silencios con umbral de energía adaptativo
     thresh = max(audio.dBFS - 14.0, -42.0)
-
-    # Solo calificar pausas reales de al menos 500 ms (0.5s)
     MIN_PAUSE_MS = 500
     detected_ranges = detect_silence(audio, min_silence_len=MIN_PAUSE_MS, silence_thresh=thresh)
 
-    # Filtrar solo silencios internos (a más de 250ms de los extremos y con duración >= 500ms)
+    # 2. Filtrar solo silencios internos (> 250ms de extremos y >= 500ms de duración)
     internal_pauses = [
         (s, e) for (s, e) in detected_ranges
         if s > 250 and e < (audio_len - 250) and (e - s) >= MIN_PAUSE_MS
     ]
 
-    # Podar pausas muy juntas (mínimo 1000ms de separación entre pausas)
+    # Podar pausas muy juntas (mínimo 1000ms entre pausas)
     pruned_pauses = []
     for p in internal_pauses:
         if not pruned_pauses or (p[0] - pruned_pauses[-1][1]) >= 1000:
@@ -350,61 +342,73 @@ def redistribute_segment_silence(source_audio_path: str, target_span_ms: int):
 
     k_pauses = len(pruned_pauses)
 
+    # 3. Limitar a MÁXIMO 2 pausas (máximo 3 fragmentos de audio)
+    if k_pauses > 2:
+        pruned_pauses = sorted(pruned_pauses, key=lambda p: (p[1] - p[0]), reverse=True)[:2]
+        pruned_pauses = sorted(pruned_pauses, key=lambda p: p[0])
+        k_pauses = 2
+
+    # 4. Cálculo de Silencios Intermedios (máximo 1500 ms por pausa)
+    MAX_INTERMEDIATE_MS = 1500
+    RESERVA_MINIMA_FINAL_MS = 800
+
     if k_pauses > 0:
-        # Limitar estrictamente a MÁXIMO 2 pausas (máximo 3 partes de audio)
-        if k_pauses > 2:
-            # Seleccionar las 2 pausas de mayor duración
-            pruned_pauses = sorted(pruned_pauses, key=lambda p: (p[1] - p[0]), reverse=True)[:2]
-            # Reordenar cronológicamente
-            pruned_pauses = sorted(pruned_pauses, key=lambda p: p[0])
-            k_pauses = 2
+        disponible_pausas = max(0, silencio_total_ms - RESERVA_MINIMA_FINAL_MS)
+        silencio_por_pausa = min(MAX_INTERMEDIATE_MS, disponible_pausas // k_pauses)
+        silencio_intermedio_total = silencio_por_pausa * k_pauses
+    else:
+        silencio_por_pausa = 0
+        silencio_intermedio_total = 0
 
-        silencio_dejar_final = min(1000, silencio_final_ms)
-        silencio_redistribuir = silencio_final_ms - silencio_dejar_final
-        silencio_por_pausa = silencio_redistribuir // k_pauses
+    # 5. Evaluación del Residuo
+    residuo_ms = silencio_total_ms - silencio_intermedio_total
 
+    if residuo_ms > 3000:
+        # Partir en dos: mitad al inicio y mitad al final
+        silencio_inicio_ms = residuo_ms // 2
+        silencio_final_ms = residuo_ms - silencio_inicio_ms
+    else:
+        # Dejar todo el residuo al final
+        silencio_inicio_ms = 0
+        silencio_final_ms = residuo_ms
+
+    # 6. Reconstrucción del Audio
+    chunks = []
+
+    # Agregar silencio inicial si aplica
+    if silencio_inicio_ms > 0:
+        chunks.append(
+            AudioSegment.silent(duration=silencio_inicio_ms, frame_rate=audio.frame_rate).set_channels(audio.channels)
+        )
+
+    if k_pauses > 0 and silencio_por_pausa > 0:
         cut_points = [(s + e) // 2 for (s, e) in pruned_pauses]
-
-        chunks = []
         prev_idx = 0
         for cp in cut_points:
             chunks.append(audio[prev_idx:cp])
-            chunks.append(AudioSegment.silent(duration=silencio_por_pausa, frame_rate=audio.frame_rate).set_channels(audio.channels))
+            chunks.append(
+                AudioSegment.silent(duration=silencio_por_pausa, frame_rate=audio.frame_rate).set_channels(audio.channels)
+            )
             prev_idx = cp
         chunks.append(audio[prev_idx:])
-
-        rebuilt = chunks[0]
-        for c in chunks[1:]:
-            rebuilt += c
-
-        info = {
-            "mode": "internal_pauses",
-            "k_pauses": k_pauses,
-            "k_divisions": k_pauses + 1,
-            "silence_added_per_pause_ms": silencio_por_pausa,
-            "silence_left_at_end_ms": silencio_dejar_final,
-            "original_duration_ms": audio_len,
-            "new_duration_ms": len(rebuilt),
-            "target_span_ms": target_span_ms
-        }
-        return rebuilt, info
     else:
-        # Fallback simétrico 50/50: mitad al inicio y mitad al final (sin cortes a la voz)
-        silencio_inicio = silencio_final_ms // 2
-        silencio_final_restante = silencio_final_ms - silencio_inicio
+        chunks.append(audio)
 
-        silent_head = AudioSegment.silent(duration=silencio_inicio, frame_rate=audio.frame_rate).set_channels(audio.channels)
-        rebuilt = silent_head + audio
+    # Ensamblar
+    rebuilt = chunks[0]
+    for c in chunks[1:]:
+        rebuilt += c
 
-        info = {
-            "mode": "start_and_end",
-            "k_pauses": 0,
-            "k_divisions": 1,
-            "silence_start_ms": silencio_inicio,
-            "silence_end_ms": silencio_final_restante,
-            "original_duration_ms": audio_len,
-            "new_duration_ms": len(rebuilt),
-            "target_span_ms": target_span_ms
-        }
-        return rebuilt, info
+    info = {
+        "mode": "smart_distribution",
+        "k_pauses": k_pauses,
+        "k_divisions": k_pauses + 1 if k_pauses > 0 else 1,
+        "silence_added_per_pause_ms": silencio_por_pausa,
+        "silence_start_ms": silencio_inicio_ms,
+        "silence_end_ms": silencio_final_ms,
+        "original_duration_ms": audio_len,
+        "new_duration_ms": len(rebuilt),
+        "target_span_ms": target_span_ms
+    }
+    return rebuilt, info
 
