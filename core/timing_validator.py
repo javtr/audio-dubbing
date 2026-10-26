@@ -26,7 +26,7 @@ class TimingValidator:
         prev_start = -1
 
         for i, seg in enumerate(segments_data):
-            seg_id = seg.get("id", f"seg-{i}")
+            seg_id = str(seg.get("id", f"seg-{i}"))
             start_ms = seg.get("start_ms", 0)
             end_ms = seg.get("end_ms", 0)
             orig_text = seg.get("original", "").strip()
@@ -66,7 +66,7 @@ class TimingValidator:
                 audio_end = start_ms + (clip_dur if clip_dur > 0 else dur_ms)
                 if audio_end > next_start + 20:
                     overlap_ms = audio_end - next_start
-                    next_id = next_seg.get("id", f"seg-{i+1}")
+                    next_id = str(next_seg.get("id", f"seg-{i+1}"))
                     issues.append(f"Traslape de audio: se monta {overlap_ms}ms sobre el segmento [{next_id}]")
 
             if issues:
@@ -81,7 +81,7 @@ class TimingValidator:
         if not has_errors:
             summary = f"✅ Sincronización íntegra: todos los segmentos ({total_count}/{total_count}) están en orden cronológico."
         else:
-            bad_ids = ", ".join(list(anomalies.keys())[:5])
+            bad_ids = ", ".join(str(k) for k in list(anomalies.keys())[:5])
             if error_count > 5:
                 bad_ids += f" y {error_count - 5} más"
             summary = f"⚠️ Se detectaron advertencias en {error_count} segmento(s): [{bad_ids}]. Revisa los tiempos."
