@@ -592,6 +592,8 @@ class ApplyTranslationRequest(BaseModel):
 @app.post("/api/script/apply-translation")
 def apply_translation_endpoint(req: ApplyTranslationRequest):
     metadata = pm.load_project_metadata(req.project)
+    if not metadata:
+        raise HTTPException(status_code=400, detail="No hay segmentos cargados en el proyecto.")
     new_data = req.translations
 
     new_map = {str(item.get("id")): item for item in new_data if "id" in item}
