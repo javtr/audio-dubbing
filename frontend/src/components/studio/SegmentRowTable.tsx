@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Segment } from '../../types';
 import { useProjectStore } from '../../stores/useProjectStore';
 import * as api from '../../api/client';
-import { Play, Pause, Save, Trash2, Zap, RotateCcw, Check, RefreshCw, AlertTriangle } from 'lucide-react';
+import { Play, Pause, Save, Trash2, Zap, RotateCcw, Check, RefreshCw, AlertTriangle, Sparkles } from 'lucide-react';
 import { detectOverlaps, OverlapAnalysisResult } from '../../utils/overlapDetector';
 
 interface Props {
@@ -24,7 +24,8 @@ export const SegmentRowTable: React.FC<Props> = ({ onRefreshWaveforms, onOverlap
   const [playingSegmentId, setPlayingSegmentId] = useState<string | null>(null);
   const [activeAudio, setActiveAudio] = useState<HTMLAudioElement | null>(null);
   const [adjustingId, setAdjustingId] = useState<string | null>(null);
-  const [isApplyingTimings, setIsApplyingTimings] = useState(false);
+  const [isApplyingManual, setIsApplyingManual] = useState(false);
+  const [isCalculatingAuto, setIsCalculatingAuto] = useState(false);
 
   // Local state for numeric inputs so typing isn't interrupted
   const [localStarts, setLocalStarts] = useState<Record<string, number>>({});
@@ -159,19 +160,20 @@ export const SegmentRowTable: React.FC<Props> = ({ onRefreshWaveforms, onOverlap
   };
 
   // Aplicar todos los cambios de tiempos y recalcular la línea de tiempo completa
-  const handleApplyAllTimings = async () => {
+  // 1. Aplicar en lote todos los cambios manuales que el usuario editó en las filas
+  const handleApplyManualChanges = async () => {
     if (!currentProject) return;
-    setIsApplyingTimings(true);
-    console.log(`[SegmentRowTable] Enviando aplicación y recálculo de tiempos para ${segments.length} segmentos...`);
+    setIsApplyingManual(true);
+    console.log(`[SegmentRowTable] Aplicando cambios manuales de ratios/tiempos para ${segments.length} segmentos...`);
     try {
       const payload = segments.map((s) => ({
         id: String(s.id),
         start_ms: localStarts[String(s.id)] ?? s.start_ms,
+        ratio: localRatios[String(s.id)] ?? s.speed_ratio ?? s.current_speed_ratio ?? 1.0,
       }));
-      const res = await api.updateProjectTimings(currentProject, payload);
+      const res = await api.applyManualChanges(currentProject, payload);
       useProjectStore.getState().setSegments(res.metadata);
 
-      // Sincronizar inputs locales con los valores recalculados confirmados por el servidor
       const freshStarts: Record<string, number> = {};
       const freshRatios: Record<string, number> = {};
       res.metadata.forEach((s) => {
@@ -182,15 +184,46 @@ export const SegmentRowTable: React.FC<Props> = ({ onRefreshWaveforms, onOverlap
       setLocalStarts(freshStarts);
       setLocalRatios(freshRatios);
 
-      console.log(`[SegmentRowTable] Recálculo completado y sincronizado con éxito.`);
+      console.log(`[SegmentRowTable] Cambios manuales aplicados con éxito.`);
       onRefreshWaveforms();
     } catch (err: any) {
-      console.error(`[SegmentRowTable] Error al aplicar tiempos:`, err);
-      alert(`Error al aplicar tiempos: ${err.message}`);
+      console.error(`[SegmentRowTable] Error al aplicar cambios manuales:`, err);
+      alert(`Error al aplicar cambios: ${err.message}`);
     } finally {
-      setIsApplyingTimings(false);
+      setIsApplyingManual(false);
     }
   };
+
+  // 2. Calcular automáticamente los ratios óptimos bajo las 2 directrices (mín 0.8x y 0 traslapes)
+  const handleAutoRatios = async () => {
+    if (!currentProject) return;
+    setIsCalculatingAuto(true);
+    console.log(`[SegmentRowTable] Solicitando cálculo automático de ratios sin traslapes...`);
+    try {
+      const res = await api.autoCalculateRatios(currentProject);
+      useProjectStore.getState().setSegments(res.metadata);
+
+      const freshStarts: Record<string, number> = {};
+      const freshRatios: Record<string, number> = {};
+      res.metadata.forEach((s) => {
+        const sid = String(s.id);
+        freshStarts[sid] = s.start_ms;
+        freshRatios[sid] = s.speed_ratio ?? s.current_speed_ratio ?? 1.0;
+      });
+      setLocalStarts(freshStarts);
+      setLocalRatios(freshRatios);
+
+      console.log(`[SegmentRowTable] Ratios automáticos calculados y mezcla sincronizada con éxito.`);
+      onRefreshWaveforms();
+    } catch (err: any) {
+      console.error(`[SegmentRowTable] Error al calcular ratios automáticos:`, err);
+      alert(`Error al calcular ratios automáticos: ${err.message}`);
+    } finally {
+      setIsCalculatingAuto(false);
+    }
+  };
+
+
 
   // Delete currently selected segment
   const handleDeleteSelected = async () => {
@@ -240,13 +273,26 @@ export const SegmentRowTable: React.FC<Props> = ({ onRefreshWaveforms, onOverlap
             </button>
           )}
 
+          {/* BOTON 1: APLICAR CAMBIOS MANUALES */}
           <button
-            onClick={handleApplyAllTimings}
-            disabled={isApplyingTimings}
-            className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-sky-600 hover:bg-sky-500 text-white transition flex items-center gap-1.5 shadow-md shadow-sky-600/20 disabled:opacity-50"
+            onClick={handleApplyManualChanges}
+            disabled={isApplyingManual || isCalculatingAuto}
+            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-sky-600 hover:bg-sky-500 text-white transition flex items-center gap-1.5 shadow-sm shadow-sky-600/20 disabled:opacity-50"
+            title="Aplica todos los inicios y ratios que editaste manualmente en las filas y reconstruye la mezcla"
           >
-            {isApplyingTimings ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-            <span>Aplicar y Recalcular Tiempos</span>
+            {isApplyingManual ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+            <span>Aplicar Cambios</span>
+          </button>
+
+          {/* BOTON 2: RATIOS AUTOMATICOS (SIN TRASLAPES & MIN 0.8x) */}
+          <button
+            onClick={handleAutoRatios}
+            disabled={isApplyingManual || isCalculatingAuto}
+            className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-violet-600 hover:bg-violet-500 text-white transition flex items-center gap-1.5 shadow-md shadow-violet-600/20 disabled:opacity-50"
+            title="Calcula automáticamente las velocidades óptimas: ratio mín. 0.8x y 0 traslapes entre audios"
+          >
+            {isCalculatingAuto ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+            <span>Ratios Automáticos</span>
           </button>
         </div>
       </div>

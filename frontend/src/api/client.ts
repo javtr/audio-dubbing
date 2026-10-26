@@ -191,3 +191,23 @@ export const applyRetranslation = async (project: string, retranslatedJson: any[
   });
   return res.data;
 };
+
+export const applyManualChanges = async (
+  project: string,
+  changes: { id: string | number; start_ms: number; ratio: number }[]
+) => {
+  const res = await api.post('/timeline/apply-manual-changes', {
+    project,
+    changes: changes.map((c) => ({
+      id: String(c.id),
+      start_ms: Number(c.start_ms),
+      ratio: Number(c.ratio),
+    })),
+  });
+  return res.data;
+};
+
+export const autoCalculateRatios = async (project: string) => {
+  const res = await api.post('/timeline/auto-ratios', { project });
+  return res.data;
+};

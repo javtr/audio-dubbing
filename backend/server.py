@@ -101,8 +101,27 @@ def export_dubbed_mix_versioned(processor, paths: dict, project: str) -> str:
         return new_filepath
 
 
+def build_atempo_filter(ratio: float) -> str:
+    """
+    Construye la cadena de filtros atempo encadenados para cualquier ratio.
+    FFmpeg sólo admite entre 0.5 y 2.0 por nodo, por lo que se encadenan si supera 2.0x o baja de 0.5x.
+    Ejemplo: ratio=2.40 -> 'atempo=2.0,atempo=1.2000'
+    """
+    ratio = max(0.5, float(ratio))
+    filters = []
+    current = ratio
+    while current > 2.0:
+        filters.append("atempo=2.0")
+        current /= 2.0
+    while current < 0.5:
+        filters.append("atempo=0.5")
+        current /= 0.5
+    filters.append(f"atempo={current:.4f}")
+    return ",".join(filters)
+
+
 def calculate_segment_speed_ratio(raw_duration_ms: int, target_span_ms: int, manual_ratio: Optional[float] = None) -> float:
-    """Calcula ratio de velocidad con límite inferior 0.85x y sin límite superior."""
+    """Calcula ratio de velocidad con límite inferior 0.80x y sin límite superior."""
     if manual_ratio is not None and manual_ratio > 0:
         return round(float(manual_ratio), 2)
     if target_span_ms <= 0 or raw_duration_ms <= 0:
@@ -114,9 +133,9 @@ def calculate_segment_speed_ratio(raw_duration_ms: int, target_span_ms: int, man
     if raw_ratio > 1.0:
         return round(raw_ratio, 2)
     
-    # Si necesita desacelerar (< 1.0): NUNCA bajar de 0.85x
-    if raw_ratio < 0.85:
-        return 0.85
+    # Si necesita desacelerar (< 1.0): NUNCA bajar de 0.80x
+    if raw_ratio < 0.80:
+        return 0.80
         
     return round(raw_ratio, 2)
 
@@ -165,10 +184,10 @@ def process_segment_from_raw(paths: dict, segment: dict, requested_ratio: Option
         os.makedirs(temp_dir, exist_ok=True)
         temp_out = os.path.join(temp_dir, f"stretched_{final_ratio:.3f}_{filename}")
         
-        ratio_clamped = max(0.5, min(final_ratio, 100.0))
+        atempo_filter = build_atempo_filter(final_ratio)
         cmd = [
             "ffmpeg", "-y", "-i", raw_path,
-            "-filter:a", f"atempo={ratio_clamped}",
+            "-filter:a", atempo_filter,
             temp_out
         ]
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
@@ -1043,6 +1062,135 @@ def update_project_timings(req: UpdateTimingsRequest):
 
     val = TimingValidator.validate(metadata)
     print(f"[TIMINGS-UPDATE] Recálculo completado con éxito para proyecto '{req.project}'.")
+    return {"status": "ok", "metadata": metadata, "validation": val}
+
+
+class ManualChangeItem(BaseModel):
+    id: str
+    start_ms: int
+    ratio: float
+
+class ApplyManualChangesRequest(BaseModel):
+    project: str
+    changes: list[ManualChangeItem]
+
+@app.post("/api/timeline/apply-manual-changes")
+def apply_manual_changes(req: ApplyManualChangesRequest):
+    paths = pm.get_project_paths(req.project)
+    metadata = pm.load_project_metadata(req.project)
+    audio_path = paths.get("audio_file")
+    audios_dir = paths.get("audios_dir")
+    
+    print(f"[MANUAL-CHANGES] Aplicando {len(req.changes)} cambios manuales en proyecto '{req.project}'...")
+    change_map = {str(c.id): c for c in req.changes}
+    
+    for seg in metadata:
+        sid = str(seg.get("id"))
+        if sid in change_map:
+            c = change_map[sid]
+            seg["start_ms"] = max(0, c.start_ms)
+            target_ratio = max(0.5, min(10.0, float(c.ratio)))
+            process_segment_from_raw(
+                paths=paths,
+                segment=seg,
+                requested_ratio=target_ratio,
+                is_manual=True
+            )
+
+    # Ordenar cronológicamente
+    metadata.sort(key=lambda x: x.get("start_ms", 0))
+    pm.save_project_metadata(req.project, metadata)
+
+    # Reconstruir mezcla versionada
+    processor = AudioProcessor(audio_path, audios_dir, metadata)
+    export_dubbed_mix_versioned(processor, paths, req.project)
+
+    val = TimingValidator.validate(metadata)
+    print(f"[MANUAL-CHANGES] Éxito: {len(req.changes)} cambios manuales aplicados y mezcla reconstruida.")
+    return {"status": "ok", "metadata": metadata, "validation": val}
+
+
+class AutoRatiosRequest(BaseModel):
+    project: str
+
+@app.post("/api/timeline/auto-ratios")
+def auto_calculate_ratios(req: AutoRatiosRequest):
+    import math
+    from pydub import AudioSegment
+    paths = pm.get_project_paths(req.project)
+    metadata = pm.load_project_metadata(req.project)
+    audio_path = paths.get("audio_file")
+    audios_dir = paths.get("audios_dir")
+    
+    print(f"[AUTO-RATIOS] Calculando ratios automáticos (mín 0.8x y 0 traslapes) para proyecto '{req.project}'...")
+    
+    # 1. Asegurar orden cronológico por start_ms
+    metadata.sort(key=lambda s: s.get("start_ms", 0))
+
+    total_audio_ms = 0
+    if audio_path and os.path.exists(audio_path):
+        try:
+            total_audio_ms = len(AudioSegment.from_file(audio_path))
+        except Exception:
+            total_audio_ms = 0
+
+    SAFETY_BUFFER_MS = 25  # Margen de 25ms para que el audio termine limpiamente antes del siguiente
+
+    for i, seg in enumerate(metadata):
+        cur_start = seg.get("start_ms", 0)
+        
+        # Calcular espacio disponible hasta el siguiente segmento
+        if i < len(metadata) - 1:
+            next_start = metadata[i + 1].get("start_ms", cur_start + 1000)
+            if next_start <= cur_start:
+                next_start = cur_start + 100
+                metadata[i + 1]["start_ms"] = next_start
+            available_span = max(100, (next_start - cur_start) - SAFETY_BUFFER_MS)
+        else:
+            available_span = max(1000, total_audio_ms - cur_start) if total_audio_ms > cur_start else 10000
+
+        # Obtener duración del máster raw
+        fname = seg.get("filename", "")
+        raw_p = os.path.join(audios_dir, "raw", fname) if fname and audios_dir else ""
+        if not os.path.exists(raw_p) and fname and audios_dir:
+            active_p = os.path.join(audios_dir, fname)
+            if os.path.exists(active_p):
+                raw_p = active_p
+
+        raw_dur = 0
+        if raw_p and os.path.exists(raw_p):
+            try:
+                raw_dur = len(AudioSegment.from_file(raw_p))
+            except Exception:
+                raw_dur = seg.get("clip_duration_ms", 0)
+        if raw_dur <= 0:
+            raw_dur = max(100, seg.get("end_ms", 0) - cur_start)
+
+        # Directriz 2: Cero traslapes (acelerar si raw_dur > available_span)
+        needed_ratio = raw_dur / float(available_span)
+        if needed_ratio > 1.0:
+            final_ratio = math.ceil(needed_ratio * 100) / 100.0
+        else:
+            # Directriz 1: Nunca tener ratio menor a 0.80x
+            target_span = seg.get("end_ms", 0) - cur_start
+            slot_ratio = (raw_dur / float(target_span)) if target_span > 0 else 1.0
+            final_ratio = max(0.80, min(1.0, round(slot_ratio, 2)))
+
+        process_segment_from_raw(
+            paths=paths,
+            segment=seg,
+            requested_ratio=final_ratio,
+            is_manual=True
+        )
+
+    pm.save_project_metadata(req.project, metadata)
+
+    # Reconstruir mezcla versionada
+    processor = AudioProcessor(audio_path, audios_dir, metadata)
+    export_dubbed_mix_versioned(processor, paths, req.project)
+
+    val = TimingValidator.validate(metadata)
+    print(f"[AUTO-RATIOS] Éxito: {len(metadata)} segmentos calculados con ratios automáticos sin traslapes.")
     return {"status": "ok", "metadata": metadata, "validation": val}
 
 
