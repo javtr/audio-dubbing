@@ -1047,62 +1047,159 @@ def stream_dubbed_audio(project: str, force: bool = False):
     )
 
 
+def invalidate_waveform_cache(project: str, kind: str = "dub"):
+    paths = pm.get_project_paths(project)
+    if kind in ("all", "orig"):
+        orig_cache = os.path.join(paths["root"], "waveform_orig.json")
+        if os.path.exists(orig_cache):
+            try:
+                os.remove(orig_cache)
+            except Exception:
+                pass
+    if kind in ("all", "dub"):
+        dub_cache = os.path.join(paths["root"], "waveform_dub.json")
+        if os.path.exists(dub_cache):
+            try:
+                os.remove(dub_cache)
+            except Exception:
+                pass
+
+
+def get_cached_orig_peaks(project: str, audio_path: str, points: int = 1600):
+    paths = pm.get_project_paths(project)
+    cache_file = os.path.join(paths["root"], "waveform_orig.json")
+
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if data.get("points") == points and len(data.get("peaks", [])) > 0:
+                    return data["peaks"], data.get("duration_ms", 0)
+        except Exception:
+            pass
+
+    if not audio_path or not os.path.exists(audio_path):
+        return [], 0
+
+    try:
+        from pydub import AudioSegment
+        audio_orig = AudioSegment.from_file(audio_path)
+        dur_ms = len(audio_orig)
+        peaks = compute_min_max_waveform(audio_orig, num_bins=points)
+        try:
+            with open(cache_file, "w", encoding="utf-8") as f:
+                json.dump({"duration_ms": dur_ms, "points": points, "peaks": peaks}, f)
+        except Exception:
+            pass
+        return peaks, dur_ms
+    except Exception as e:
+        print("Error loading original audio for waveform:", e)
+        return [], 0
+
+
+def get_cached_dub_peaks(project: str, paths: dict, metadata: list, points: int = 1600):
+    cache_file = os.path.join(paths["root"], "waveform_dub.json")
+    meta_file = paths.get("metadata_file", "")
+    meta_mtime = os.path.getmtime(meta_file) if meta_file and os.path.exists(meta_file) else 0
+
+    audios_dir = paths.get("audios_dir", "")
+    latest_wav_mtime = 0
+    if audios_dir and os.path.exists(audios_dir):
+        for f in os.listdir(audios_dir):
+            if f.endswith(".wav"):
+                try:
+                    m = os.path.getmtime(os.path.join(audios_dir, f))
+                    if m > latest_wav_mtime:
+                        latest_wav_mtime = m
+                except Exception:
+                    pass
+
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                c_meta_mtime = data.get("metadata_mtime", 0)
+                c_wav_mtime = data.get("wav_mtime", 0)
+                if (data.get("points") == points and 
+                    c_meta_mtime == meta_mtime and 
+                    c_wav_mtime >= latest_wav_mtime and 
+                    len(data.get("peaks", [])) > 0):
+                    return data["peaks"], data.get("duration_ms", 0)
+        except Exception:
+            pass
+
+    # Recomputar onda doblada en memoria SIN exportar a MP3 con FFmpeg
+    audio_path = paths.get("audio_file")
+    processor = AudioProcessor(audio_path, audios_dir, metadata)
+    try:
+        dub_mix = processor.mix_dubbed_audio(force=False)
+        if dub_mix:
+            dur_ms = len(dub_mix)
+            peaks = compute_min_max_waveform(dub_mix, num_bins=points)
+            try:
+                with open(cache_file, "w", encoding="utf-8") as f:
+                    json.dump({
+                        "metadata_mtime": meta_mtime,
+                        "wav_mtime": latest_wav_mtime,
+                        "duration_ms": dur_ms,
+                        "points": points,
+                        "peaks": peaks
+                    }, f)
+            except Exception:
+                pass
+            return peaks, dur_ms
+    except Exception as e:
+        print("Error mixing dubbed audio for waveform:", e)
+
+    return [], 0
+
+
 @app.get("/api/waveform/{project}/all")
 def get_all_waveforms(project: str, points: int = 1600):
     paths = pm.get_project_paths(project)
     metadata = pm.load_project_metadata(project)
-    
     audio_path = paths.get("audio_file")
-    orig_peaks = []
-    total_dur_ms = 0
-    from pydub import AudioSegment
-    if audio_path and os.path.exists(audio_path):
-        try:
-            audio_orig = AudioSegment.from_file(audio_path)
-            total_dur_ms = len(audio_orig)
-            orig_peaks = compute_min_max_waveform(audio_orig, num_bins=points)
-        except Exception as e:
-            print("Error loading original audio for waveform:", e)
 
-    # Dubbed mix waveform & dead silence gaps
-    audios_dir = paths.get("audios_dir", "")
-    processor = AudioProcessor(audio_path, audios_dir, metadata)
-    dub_peaks = []
-    try:
-        dub_mix = processor.mix_dubbed_audio(force=True)
-        if dub_mix:
-            if total_dur_ms == 0:
-                total_dur_ms = len(dub_mix)
-            dub_peaks = compute_min_max_waveform(dub_mix, num_bins=points)
+    # 1. Onda original (Instantánea desde caché persistente)
+    orig_peaks, orig_dur_ms = get_cached_orig_peaks(project, audio_path, points=points)
 
-            # Keep dubbed mix synchronized cleanly via versioned export
-            export_dubbed_mix_versioned(processor, paths, project)
-    except Exception as e:
-        print("Error mixing dubbed audio for waveform:", e)
+    # 2. Onda doblada (Instantánea desde caché si metadatos y WAVs no cambiaron)
+    dub_peaks, dub_dur_ms = get_cached_dub_peaks(project, paths, metadata, points=points)
 
-    # Detect dead silences >= 4.0s
+    total_dur_ms = orig_dur_ms or dub_dur_ms
+
+    # 3. Detección rápida de silencios >= 4.0s (usando clip_duration_ms de metadatos)
     silences = []
+    audios_dir = paths.get("audios_dir", "")
+    from pydub import AudioSegment
     for s in metadata:
         s_ms = s.get("start_ms", 0)
         e_ms = s.get("end_ms", 0)
-        fname = s.get("filename", "")
-        fpath = os.path.join(audios_dir, fname) if fname and audios_dir else ""
-        if fpath and os.path.exists(fpath):
-            try:
-                clip_audio = AudioSegment.from_file(fpath)
-                clip_dur = len(clip_audio)
-                voice_end = s_ms + clip_dur
-                gap_ms = e_ms - voice_end
-                if gap_ms >= 4000:
-                    silences.append({
-                        "start_ms": voice_end,
-                        "end_ms": e_ms,
-                        "dur_s": round(gap_ms / 1000.0, 1),
-                        "segment_id": str(s.get("id")),
-                        "level": "critical" if gap_ms > 10000 else "warning"
-                    })
-            except Exception:
-                pass
+        clip_dur = s.get("clip_duration_ms", 0)
+
+        # Solo si falta la duración en metadatos se lee del archivo en disco
+        if clip_dur == 0:
+            fname = s.get("filename", "")
+            fpath = os.path.join(audios_dir, fname) if fname and audios_dir else ""
+            if fpath and os.path.exists(fpath):
+                try:
+                    clip_audio = AudioSegment.from_file(fpath)
+                    clip_dur = len(clip_audio)
+                    s["clip_duration_ms"] = clip_dur
+                except Exception:
+                    pass
+
+        if clip_dur > 0:
+            voice_end = s_ms + clip_dur
+            gap_ms = e_ms - voice_end
+            if gap_ms >= 4000:
+                silences.append({
+                    "start_ms": voice_end,
+                    "end_ms": e_ms,
+                    "dur_s": round(gap_ms / 1000.0, 1),
+                    "segment_id": str(s.get("id")),
+                    "level": "critical" if gap_ms > 10000 else "warning"
+                })
 
     return {
         "duration_ms": total_dur_ms,
