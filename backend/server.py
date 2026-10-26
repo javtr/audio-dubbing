@@ -1437,43 +1437,58 @@ class AutoSplitRequest(BaseModel):
 
 @app.post("/api/timeline/auto-split")
 def auto_split_segment(req: AutoSplitRequest):
+    paths = pm.get_project_paths(req.project)
     metadata = pm.load_project_metadata(req.project)
     idx = next((i for i, s in enumerate(metadata) if str(s.get("id")) == str(req.segment_id)), None)
     if idx is None:
         raise HTTPException(status_code=404, detail="Segmento no encontrado.")
 
     seg = metadata[idx]
-    orig_text = seg.get("original", "").strip()
-    trans_text = seg.get("translated", "").strip()
+    target_span = seg.get("end_ms", 0) - seg.get("start_ms", 0)
 
-    # Split using commas/punctuation or connectors
-    part1_es, part2_es, part1_tr, part2_tr = aligner._split_segment_text(seg, 0.5)
+    # Buscar el audio original limpio en raw/ si existe, o en audios/
+    raw_path = os.path.join(paths["audios_dir"], "raw", seg["filename"])
+    current_path = os.path.join(paths["audios_dir"], seg["filename"])
+    source_audio = raw_path if os.path.exists(raw_path) else current_path
 
-    base_id = str(seg.get("id", "seg"))
-    mid_time = int((seg.get("start_ms", 0) + seg.get("end_ms", 0)) / 2)
+    if not os.path.exists(source_audio):
+        raise HTTPException(status_code=400, detail="El segmento aún no tiene audio doblado generado.")
 
-    seg_a = copy.deepcopy(seg)
-    seg_a["id"] = f"{base_id}_a"
-    seg_a["original"] = part1_es
-    seg_a["translated"] = part1_tr
-    seg_a["end_ms"] = mid_time
+    try:
+        from core.audio_processor import redistribute_segment_silence
+        new_audio, info = redistribute_segment_silence(source_audio, target_span)
 
-    seg_b = copy.deepcopy(seg)
-    seg_b["id"] = f"{base_id}_b"
-    seg_b["original"] = part2_es
-    seg_b["translated"] = part2_tr
-    seg_b["start_ms"] = mid_time
+        # Exportar el audio con silencios redistribuidos a audios/
+        new_audio.export(current_path, format="wav")
 
-    # Replace segment with subsegments
-    metadata = metadata[:idx] + [seg_a, seg_b] + metadata[idx + 1:]
-    
-    # Reindex filenames
-    for i, s in enumerate(metadata):
-        s["filename"] = f"segment_{i:03d}.wav"
+        # Actualizar metadatos del segmento
+        new_len = len(new_audio)
+        seg["clip_duration_ms"] = new_len
+        seg["speed_ratio"] = 1.0
+        seg["current_speed_ratio"] = 1.0
+        seg["is_manual_ratio"] = True
 
-    pm.save_project_metadata(req.project, metadata)
-    val = TimingValidator.validate(metadata)
-    return {"status": "ok", "metadata": metadata, "validation": val}
+        pm.save_project_metadata(req.project, metadata)
+
+        # Invalidar caché de mezcla de audio
+        mix_file = os.path.join(paths["root"], "mix", "dubbed_mix.mp3")
+        if os.path.exists(mix_file):
+            try:
+                os.remove(mix_file)
+            except Exception:
+                pass
+
+        val = TimingValidator.validate(metadata)
+        return {
+            "status": "ok",
+            "info": info,
+            "metadata": metadata,
+            "validation": val
+        }
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al redistribuir silencios: {str(e)}")
 
 
 class AutoSplitAllRequest(BaseModel):

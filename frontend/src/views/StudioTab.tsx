@@ -158,9 +158,21 @@ export const StudioTab: React.FC = () => {
     try {
       const res = await api.autoSplitSegment(currentProject, selectedSegmentId);
       setSegments(res.metadata);
-      loadWaveforms();
+      setDubbedAudioVersion(Date.now());
+      await loadWaveforms();
+      if (res.info) {
+        if (res.info.mode === 'internal_pauses') {
+          alert(
+            `¡Silencios redistribuidos con éxito!\nSe detectaron ${res.info.k_pauses} pausa(s) interna(s).\nSe intercalaron ${(res.info.silence_added_per_pause_ms / 1000).toFixed(2)}s en cada una, dejando ${(res.info.silence_left_at_end_ms / 1000).toFixed(1)}s de respiro al final.`
+          );
+        } else {
+          alert(
+            `¡Sin pausas internas detectadas en el audio!\nSe redistribuyó el silencio en 2 mitades iguales: ${(res.info.silence_start_ms / 1000).toFixed(2)}s al inicio y ${(res.info.silence_end_ms / 1000).toFixed(2)}s al final.`
+          );
+        }
+      }
     } catch (err: any) {
-      alert(`Error al auto-dividir: ${err.message}`);
+      alert(`Aviso: ${err?.response?.data?.detail || err.message}`);
     }
   };
 
@@ -277,6 +289,7 @@ export const StudioTab: React.FC = () => {
             onClick={handleAutoSplitSelected}
             disabled={!selectedSegmentId}
             className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-sky-600 hover:bg-sky-500 text-white transition flex items-center gap-1 disabled:opacity-40"
+            title="Redistribuye el silencio final (> 2s) entre las pausas naturales del audio doblado (o 50% al inicio y 50% al final)"
           >
             <Split className="w-3.5 h-3.5" />
             <span>Auto-dividir frase</span>

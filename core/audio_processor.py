@@ -5,6 +5,7 @@ import tempfile
 import shutil
 import numpy as np
 from pydub import AudioSegment
+from pydub.silence import detect_silence
 
 class AudioProcessor:
     def __init__(self, original_audio_path, audios_dir, metadata):
@@ -296,3 +297,97 @@ class AudioProcessor:
 
     def cleanup(self):
         shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+
+def redistribute_segment_silence(source_audio_path: str, target_span_ms: int):
+    """
+    Toma el archivo de audio del segmento y el tiempo disponible (target_span_ms = end_ms - start_ms).
+    Redistribuye el silencio excesivo al final:
+    1. Si silencio_final <= 2000 ms, lanza ValueError.
+    2. Busca pausas internas naturales (detect_silence).
+    3. Si K >= 1 pausas:
+       - Reserva 2000 ms de silencio al final.
+       - Silencio a redistribuir = silencio_final - 2000 ms.
+       - Silencio por pausa = silencio_redistribuir // K.
+       - Intercala ese silencio en los puntos medios de cada pausa.
+    4. Si K == 0 pausas:
+       - Divide el silencio final en 2 mitades iguales (silencio_inicio y silencio_final_restante).
+       - Añade silencio_inicio al inicio del audio.
+    """
+    if not os.path.exists(source_audio_path):
+        raise FileNotFoundError(f"Audio no encontrado: {source_audio_path}")
+
+    audio = AudioSegment.from_file(source_audio_path)
+    audio_len = len(audio)
+    silencio_final_ms = target_span_ms - audio_len
+
+    if silencio_final_ms <= 2000:
+        raise ValueError(
+            f"El segmento no tiene un silencio al final mayor a 2.0s (silencio detectado: {silencio_final_ms/1000:.2f}s). "
+            "No requiere redistribución."
+        )
+
+    # Detectar silencios con un umbral relativo a la energía del audio
+    thresh = max(audio.dBFS - 14.0, -42.0)
+    detected_ranges = detect_silence(audio, min_silence_len=160, silence_thresh=thresh)
+
+    # Filtrar solo silencios internos (a más de 250ms de los extremos y con duración >= 140ms)
+    internal_pauses = [
+        (s, e) for (s, e) in detected_ranges
+        if s > 250 and e < (audio_len - 250) and (e - s) >= 140
+    ]
+
+    # Podar pausas excesivamente pegadas (mínimo 700ms entre pausas para no cortar dentro de una misma palabra)
+    pruned_pauses = []
+    for p in internal_pauses:
+        if not pruned_pauses or (p[0] - pruned_pauses[-1][1]) >= 700:
+            pruned_pauses.append(p)
+
+    k_pauses = len(pruned_pauses)
+
+    if k_pauses > 0:
+        silencio_dejar_final = min(2000, silencio_final_ms)
+        silencio_redistribuir = silencio_final_ms - silencio_dejar_final
+        silencio_por_pausa = silencio_redistribuir // k_pauses
+
+        cut_points = [(s + e) // 2 for (s, e) in pruned_pauses]
+
+        chunks = []
+        prev_idx = 0
+        for cp in cut_points:
+            chunks.append(audio[prev_idx:cp])
+            chunks.append(AudioSegment.silent(duration=silencio_por_pausa, frame_rate=audio.frame_rate).set_channels(audio.channels))
+            prev_idx = cp
+        chunks.append(audio[prev_idx:])
+
+        rebuilt = chunks[0]
+        for c in chunks[1:]:
+            rebuilt += c
+
+        info = {
+            "mode": "internal_pauses",
+            "k_pauses": k_pauses,
+            "silence_added_per_pause_ms": silencio_por_pausa,
+            "silence_left_at_end_ms": silencio_dejar_final,
+            "original_duration_ms": audio_len,
+            "new_duration_ms": len(rebuilt),
+            "target_span_ms": target_span_ms
+        }
+        return rebuilt, info
+    else:
+        silencio_inicio = silencio_final_ms // 2
+        silencio_final_restante = silencio_final_ms - silencio_inicio
+
+        silent_head = AudioSegment.silent(duration=silencio_inicio, frame_rate=audio.frame_rate).set_channels(audio.channels)
+        rebuilt = silent_head + audio
+
+        info = {
+            "mode": "start_and_end",
+            "k_pauses": 0,
+            "silence_start_ms": silencio_inicio,
+            "silence_end_ms": silencio_final_restante,
+            "original_duration_ms": audio_len,
+            "new_duration_ms": len(rebuilt),
+            "target_span_ms": target_span_ms
+        }
+        return rebuilt, info
