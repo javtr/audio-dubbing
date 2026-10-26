@@ -71,7 +71,7 @@ export const ScriptTab: React.FC = () => {
       const res = await api.generateTranslationPrompt(currentProject);
       await navigator.clipboard.writeText(res.prompt);
       setBannerNotice(
-        `¡Prompt de traducción copiado (${res.segments_count} frases)! Pégalo en Gemini Web y luego pega el JSON resultante en la caja derecha.`
+        `¡Prompt de traducción copiado (${res.segments_count} frases)! Con regla: palabras en inglés >= español y los 4 tonos (Conversacional, Explicatorio, Efusivo, Serio).`
       );
       setTimeout(() => setBannerNotice(null), 8000);
     } catch (err: any) {
@@ -302,7 +302,7 @@ export const ScriptTab: React.FC = () => {
           <textarea
             value={jsonText}
             onChange={(e) => setJsonText(e.target.value)}
-            placeholder={`Pega aquí el JSON traducido devuelto por Gemini:\n[\n  {\n    "id": 1,\n    "translated": "Hello everyone, welcome."\n  },\n  {\n    "id": 2,\n    "translated": "In this video we will explain..."\n  }\n]`}
+            placeholder={`Pega aquí el JSON traducido devuelto por Gemini:\n[\n  {\n    "id": 1,\n    "translated": "Hello everyone, welcome to this video.",\n    "tone": "Conversacional"\n  },\n  {\n    "id": 2,\n    "translated": "Keep in mind that trading involves financial risk.",\n    "tone": "Serio"\n  }\n]`}
             className="flex-1 min-h-0 w-full bg-neutral-950 border border-neutral-800 rounded-lg p-3 text-xs font-mono text-emerald-400 outline-none resize-none focus:border-sky-500 leading-relaxed"
           />
         </div>

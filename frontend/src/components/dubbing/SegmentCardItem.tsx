@@ -1,8 +1,31 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Segment, ReferenceItem } from '../../types';
 import { useProjectStore } from '../../stores/useProjectStore';
 import * as api from '../../api/client';
 import { Play, Pause, RefreshCw, Volume2, Sparkles, Check, AlertCircle } from 'lucide-react';
+
+const mapToneToRef = (tone?: string): string => {
+  if (!tone) return 'ref_Conversational';
+  const t = tone.toLowerCase();
+  if (t.includes('expl')) return 'ref_Explanatory';
+  if (t.includes('efus') || t.includes('effus')) return 'ref_Effusive';
+  if (t.includes('seri')) return 'ref_Serious';
+  return 'ref_Conversational';
+};
+
+const getToneBadgeStyle = (tone?: string) => {
+  const t = (tone || 'Conversacional').toLowerCase();
+  if (t.includes('expl')) {
+    return 'bg-sky-500/20 text-sky-400 border-sky-500/30';
+  }
+  if (t.includes('efus') || t.includes('effus')) {
+    return 'bg-amber-500/20 text-amber-400 border-amber-500/30';
+  }
+  if (t.includes('seri')) {
+    return 'bg-rose-500/20 text-rose-400 border-rose-500/30';
+  }
+  return 'bg-violet-500/20 text-violet-300 border-violet-500/30';
+};
 
 interface Props {
   segment: Segment;
@@ -12,11 +35,17 @@ interface Props {
 export const SegmentCardItem: React.FC<Props> = ({ segment, index }) => {
   const { currentProject, references, updateSegment, saveCurrentMetadata } = useProjectStore();
 
-  const [selectedRef, setSelectedRef] = useState('ref_Conversational');
+  const [selectedRef, setSelectedRef] = useState(() => mapToneToRef(segment.tone));
   const [isGenerating, setIsGenerating] = useState(false);
   const [isPlayingOrig, setIsPlayingOrig] = useState(false);
   const [isPlayingDub, setIsPlayingDub] = useState(false);
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    if (segment.tone) {
+      setSelectedRef(mapToneToRef(segment.tone));
+    }
+  }, [segment.tone]);
 
   const audioOrigUrl = currentProject ? `/api/audio/${currentProject}/original` : '';
   const audioDubUrl = currentProject && segment.clip_duration_ms && segment.clip_duration_ms > 0
@@ -82,7 +111,7 @@ export const SegmentCardItem: React.FC<Props> = ({ segment, index }) => {
     <div className="w-full shrink-0 bg-neutral-900 border border-neutral-800 rounded-xl p-4 transition hover:border-neutral-700 flex flex-col gap-3">
       {/* Top Header */}
       <div className="flex items-center justify-between text-xs">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="font-bold text-neutral-400">#{index + 1}</span>
           <span className="px-2 py-0.5 rounded bg-neutral-800 font-mono text-neutral-300 font-semibold">
             {segment.id}
@@ -90,6 +119,16 @@ export const SegmentCardItem: React.FC<Props> = ({ segment, index }) => {
           <span className="text-neutral-500 font-mono">
             {(segment.start_ms / 1000).toFixed(2)}s - {(segment.end_ms / 1000).toFixed(2)}s ({targetSec}s)
           </span>
+          {segment.tone && (
+            <span
+              className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${getToneBadgeStyle(
+                segment.tone
+              )}`}
+              title={`Tono emocional detectado: ${segment.tone}`}
+            >
+              Tono: {segment.tone}
+            </span>
+          )}
         </div>
 
         {/* Speed Ratio Pill */}

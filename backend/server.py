@@ -589,6 +589,18 @@ class ApplyTranslationRequest(BaseModel):
     project: str
     translations: List[Dict[str, Any]]
 
+def normalize_tone(tone_str: Any) -> str:
+    if not tone_str or not isinstance(tone_str, str):
+        return "Conversacional"
+    t = tone_str.strip().lower()
+    if "expl" in t:
+        return "Explicatorio"
+    elif "efus" in t or "effus" in t:
+        return "Efusivo"
+    elif "seri" in t:
+        return "Serio"
+    return "Conversacional"
+
 @app.post("/api/script/apply-translation")
 def apply_translation_endpoint(req: ApplyTranslationRequest):
     metadata = pm.load_project_metadata(req.project)
@@ -605,15 +617,17 @@ def apply_translation_endpoint(req: ApplyTranslationRequest):
             match = new_map[sid]
             if "translated" in match:
                 seg["translated"] = match["translated"].strip()
-            if "tone" in match:
-                seg["tone"] = match["tone"].strip()
+            raw_tone = match.get("tone") or match.get("tono")
+            if raw_tone:
+                seg["tone"] = normalize_tone(raw_tone)
             updated_count += 1
         elif idx < len(new_data):
             match = new_data[idx]
             if "translated" in match:
                 seg["translated"] = match["translated"].strip()
-            if "tone" in match:
-                seg["tone"] = match["tone"].strip()
+            raw_tone = match.get("tone") or match.get("tono")
+            if raw_tone:
+                seg["tone"] = normalize_tone(raw_tone)
             updated_count += 1
 
     pm.save_project_metadata(req.project, metadata)
@@ -846,8 +860,25 @@ def generate_batch_tts(req: GenerateBatchTTSRequest):
                 continue
 
             ref_name = req.default_ref
-            ref_text = ref_map.get(ref_name, "")
+            seg_tone = target_seg.get("tone", "")
             lang_dir = PROJECT_ROOT / "assets" / "clone_examples" / lang
+            if seg_tone:
+                t = str(seg_tone).lower()
+                if "expl" in t:
+                    candidate = "ref_Explanatory"
+                elif "efus" in t or "effus" in t:
+                    candidate = "ref_Effusive"
+                elif "seri" in t:
+                    candidate = "ref_Serious"
+                else:
+                    candidate = "ref_Conversational"
+                c_wav = lang_dir / f"{candidate}.wav"
+                if not c_wav.exists():
+                    c_wav = PROJECT_ROOT / "assets" / "clone_examples" / f"{candidate}.wav"
+                if c_wav.exists():
+                    ref_name = candidate
+
+            ref_text = ref_map.get(ref_name, "")
             ref_wav = lang_dir / f"{ref_name}.wav"
             if not ref_wav.exists():
                 ref_wav = PROJECT_ROOT / "assets" / "clone_examples" / f"{ref_name}.wav"

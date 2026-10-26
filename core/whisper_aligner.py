@@ -173,7 +173,8 @@ class WhisperAligner:
     def generate_translation_prompt(self, segments_data, target_lang="en"):
         """
         Genera el prompt listo para Gemini Web con las frases ya delimitadas acústicamente por Whisper.
-        Gemini solo debe traducirlas sin inventar cortes ni alterar el orden.
+        Incluye conteo exacto de palabras en español para aplicar la regla: palabras_traducción >= palabras_es,
+        y asigna la clasificación de los 4 tonos requeridos (Conversacional, Explicatorio, Efusivo, Serio).
         """
         is_pt = str(target_lang).lower() in ("pt", "portuguese")
         lang_name = "PORTUGUÉS DE BRASIL (pt-BR)" if is_pt else "INGLÉS (English)"
@@ -181,38 +182,45 @@ class WhisperAligner:
         input_list = []
         for s in segments_data:
             orig = s.get("original", "").strip()
+            word_count = len(orig.split()) if orig else 0
             input_list.append({
                 "id": s.get("id"),
                 "original": orig,
+                "palabras_es": word_count
             })
 
         input_json_str = json.dumps(input_list, indent=2, ensure_ascii=False)
 
         prompt = f"""Actúa como un director de doblaje y traductor audiovisual profesional de ESPAÑOL a {lang_name}.
 
-A continuación tienes una lista de frases numeradas que fueron extraídas de un audio real con tiempos acústicos ya fijados.
-Traduce cada frase al {lang_name} con un tono natural, fluido y conversacional, manteniendo una longitud y ritmo adecuados para ser doblados por voz artificial (TTS).
+A continuación tienes una lista de frases numeradas que fueron extraídas de un audio real con tiempos acústicos fijos.
+Tu objetivo es traducir cada frase al {lang_name} y asignar la emoción adecuada respetando estrictamente estas 4 reglas obligatorias:
 
 🎯 INSTRUCCIONES ESTRICTAS:
-1. Traduce exactamente las frases proporcionadas, una a una.
-2. NO unas frases ni las dividas en más partes.
-3. Conserva exactamente el mismo "id" para cada frase.
-4. NO inventes texto adicional ni añadas muletillas que no estén en el español.
-5. Devuelve ÚNICAMENTE un bloque de código JSON válido con la estructura solicitada.
+1. TRADUCCIÓN EXACTA 1-A-1: Traduce exactamente cada frase respetando su mismo "id". NO unas frases ni crees nuevos fragmentos.
+2. LONGITUD DE PALABRAS (CRÍTICO PARA DOBLAJE):
+   - El número de palabras traducidas en {lang_name} NUNCA debe ser menor que el número de palabras en español indicado en "palabras_es" (conteo {lang_name} >= palabras_es).
+   - Si la traducción literal resulta más corta, amplía naturalmente la expresión con vocabulario fluido, conectores y detalles conversacionales para mantener el tiempo de locución adecuado sin inventar conceptos ajenos.
+3. CLASIFICACIÓN DE TONO EMOCIONAL (CAMPO "tone"):
+   Para cada frase, asigna obligatoriamente uno de estos 4 valores exactos en el campo "tone" según su contenido y contexto:
+   - "Conversacional": Saludos, introducciones, tono casual, anécdotas o transiciones fluidas.
+   - "Explicatorio": Conceptos pedagógicos, definiciones técnicas, análisis paso a paso o enseñanza.
+   - "Efusivo": Momentos de entusiasmo, energía alta, alertas destacadas, llamadas a la acción o sorpresas.
+   - "Serio": Advertencias de gestión de riesgo financiero, cláusulas de responsabilidad o conclusiones críticas.
+4. FORMATO DE SALIDA ESTRICTO:
+   Devuelve ÚNICAMENTE un bloque de código JSON válido con la siguiente estructura (sin textos antes ni después):
+
+[
+  {{
+    "id": 1,
+    "translated": "Traducción natural al {lang_name} cumpliendo con la regla de palabras...",
+    "tone": "Conversacional"
+  }}
+]
 
 DATOS A TRADUCIR:
 ```json
 {input_json_str}
-```
-
-ESTRUCTURA DE RESPUESTA REQUERIDA (JSON):
-```json
-[
-  {{
-    "id": 1,
-    "translated": "Traducción al {lang_name} aquí..."
-  }}
-]
 ```"""
         return prompt
 
