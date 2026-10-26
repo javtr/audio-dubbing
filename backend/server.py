@@ -201,7 +201,9 @@ def process_segment_from_raw(paths: dict, segment: dict, requested_ratio: Option
     segment["speed_ratio"] = final_ratio
     segment["current_speed_ratio"] = final_ratio
     segment["is_manual_ratio"] = is_manual
-    segment["end_ms"] = segment.get("start_ms", 0) + clip_len
+    # Preservar el fin original asignado a la sección, no amputarlo al audio
+    target_end = segment.get("orig_end_ms") or segment.get("end_ms", 0)
+    segment["end_ms"] = max(target_end, segment.get("start_ms", 0) + clip_len)
             
     return segment
 
@@ -806,6 +808,7 @@ def generate_single_tts(req: GenerateSingleTTSRequest):
     target_seg["current_speed_ratio"] = speed_ratio
     target_seg["is_manual_ratio"] = False
     pm.save_project_metadata(req.project, metadata)
+    invalidate_waveform_cache(req.project, "dub")
 
     # Invalidate old dubbed mix file
     mix_file = os.path.join(paths["root"], "mix", "dubbed_mix.mp3")
@@ -944,6 +947,7 @@ def generate_batch_tts(req: GenerateBatchTTSRequest):
 
         # Save all updated clip durations to project metadata
         pm.save_project_metadata(req.project, metadata)
+        invalidate_waveform_cache(req.project, "dub")
         ws_manager.broadcast_sync({"type": "tts_batch_complete"})
 
     threading.Thread(target=_worker, daemon=True).start()
@@ -1154,11 +1158,73 @@ def get_cached_dub_peaks(project: str, paths: dict, metadata: list, points: int 
     return [], 0
 
 
+def detect_all_silence_gaps(metadata: list, audios_dir: str, min_silence_ms: int = 2000) -> list:
+    """Detecta silencios al final de frases (intra) y huecos entre frases (inter) >= min_silence_ms."""
+    silences = []
+    from pydub import AudioSegment
+    sorted_meta = sorted(metadata, key=lambda s: s.get("start_ms", 0))
+
+    for i, s in enumerate(sorted_meta):
+        s_ms = s.get("start_ms", 0)
+        e_ms = s.get("end_ms", 0)
+        clip_dur = s.get("clip_duration_ms") or 0
+
+        # Carga perezosa desde archivo si falta en metadatos
+        if clip_dur == 0 and audios_dir:
+            fname = s.get("filename", "")
+            fpath = os.path.join(audios_dir, fname) if fname else ""
+            if fpath and os.path.exists(fpath):
+                try:
+                    clip_dur = len(AudioSegment.from_file(fpath))
+                    s["clip_duration_ms"] = clip_dur
+                except Exception:
+                    pass
+
+        # 1. Silencio al final de la frase (Intra-sección)
+        if clip_dur > 0:
+            voice_end = s_ms + clip_dur
+            gap_tail = e_ms - voice_end
+            if gap_tail >= min_silence_ms:
+                silences.append({
+                    "start_ms": voice_end,
+                    "end_ms": e_ms,
+                    "dur_s": round(gap_tail / 1000.0, 1),
+                    "segment_id": str(s.get("id")),
+                    "level": "critical" if gap_tail >= 5000 else "warning",
+                    "type": "tail"
+                })
+
+        # 2. Silencio entre este segmento y el siguiente (Inter-sección)
+        if i < len(sorted_meta) - 1:
+            next_s = sorted_meta[i + 1]
+            next_start = next_s.get("start_ms", 0)
+            actual_end = max(e_ms, s_ms + clip_dur)
+            inter_gap = next_start - actual_end
+            if inter_gap >= min_silence_ms:
+                silences.append({
+                    "start_ms": actual_end,
+                    "end_ms": next_start,
+                    "dur_s": round(inter_gap / 1000.0, 1),
+                    "segment_id": f"{s.get('id')}_gap",
+                    "level": "critical" if inter_gap >= 5000 else "warning",
+                    "type": "inter"
+                })
+
+    return silences
+
+
 @app.get("/api/waveform/{project}/all")
-def get_all_waveforms(project: str, points: int = 1600):
+def get_all_waveforms(project: str, points: int = 1600, force: bool = False):
     paths = pm.get_project_paths(project)
     metadata = pm.load_project_metadata(project)
     audio_path = paths.get("audio_file")
+    audios_dir = paths.get("audios_dir")
+
+    # Si se solicita refresco forzado, invalidar caché y regenerar mezcla limpia
+    if force:
+        invalidate_waveform_cache(project, "dub")
+        processor = AudioProcessor(audio_path, audios_dir, metadata)
+        export_dubbed_mix_versioned(processor, paths, project)
 
     # 1. Onda original (Instantánea desde caché persistente)
     orig_peaks, orig_dur_ms = get_cached_orig_peaks(project, audio_path, points=points)
@@ -1168,38 +1234,11 @@ def get_all_waveforms(project: str, points: int = 1600):
 
     total_dur_ms = orig_dur_ms or dub_dur_ms
 
-    # 3. Detección rápida de silencios >= 4.0s (usando clip_duration_ms de metadatos)
-    silences = []
-    audios_dir = paths.get("audios_dir", "")
-    from pydub import AudioSegment
-    for s in metadata:
-        s_ms = s.get("start_ms", 0)
-        e_ms = s.get("end_ms", 0)
-        clip_dur = s.get("clip_duration_ms") or 0
+    # 3. Detección completa de silencios >= 2.0s (intra e inter sección)
+    silences = detect_all_silence_gaps(metadata, audios_dir, min_silence_ms=2000)
 
-        # Solo si falta la duración en metadatos se lee del archivo en disco
-        if clip_dur == 0:
-            fname = s.get("filename", "")
-            fpath = os.path.join(audios_dir, fname) if fname and audios_dir else ""
-            if fpath and os.path.exists(fpath):
-                try:
-                    clip_audio = AudioSegment.from_file(fpath)
-                    clip_dur = len(clip_audio)
-                    s["clip_duration_ms"] = clip_dur
-                except Exception:
-                    pass
-
-        if clip_dur > 0:
-            voice_end = s_ms + clip_dur
-            gap_ms = e_ms - voice_end
-            if gap_ms >= 4000:
-                silences.append({
-                    "start_ms": voice_end,
-                    "end_ms": e_ms,
-                    "dur_s": round(gap_ms / 1000.0, 1),
-                    "segment_id": str(s.get("id")),
-                    "level": "critical" if gap_ms > 10000 else "warning"
-                })
+    # Persistir metadatos enriquecidos con clip_duration_ms si se completaron lecturas
+    pm.save_project_metadata(project, metadata)
 
     return {
         "duration_ms": total_dur_ms,
@@ -1459,13 +1498,22 @@ def reset_raw_audios(req: ResetAudiosRequest):
     audios_dir = paths.get("audios_dir", "")
     raw_dir = os.path.join(audios_dir, "raw")
     
-    if not os.path.exists(raw_dir):
-        raise HTTPException(status_code=400, detail="No se encontró la carpeta de audios máster originales (raw/).")
+    os.makedirs(raw_dir, exist_ok=True)
+    if os.path.exists(audios_dir):
+        for f in os.listdir(audios_dir):
+            if f.endswith(".wav"):
+                src = os.path.join(audios_dir, f)
+                dst = os.path.join(raw_dir, f)
+                if not os.path.exists(dst):
+                    shutil.copy2(src, dst)
 
     from pydub import AudioSegment
     restored_count = 0
     target_name = f"segmento '{req.segment_id}'" if req.segment_id else "TODOS los segmentos"
     print(f"[RESET-RAW] Solicitud de restauración para proyecto '{req.project}' ({target_name})...")
+
+    master_metadata = pm.load_master_metadata(req.project) or []
+    master_map = {str(m.get("id")): m for m in master_metadata}
 
     for seg in metadata:
         sid = str(seg.get("id"))
@@ -1489,11 +1537,16 @@ def reset_raw_audios(req: ResetAudiosRequest):
             seg["speed_ratio"] = 1.0
             seg["current_speed_ratio"] = 1.0
             seg["is_manual_ratio"] = False
-            seg["end_ms"] = seg.get("start_ms", 0) + raw_len
+
+            # PRESERVAR SILENCIO: Recuperar el fin maestro original del segmento sin amputarlo
+            master_seg = master_map.get(sid)
+            target_end = (master_seg.get("end_ms") if master_seg else None) or seg.get("orig_end_ms") or seg.get("end_ms", 0)
+            seg["end_ms"] = max(target_end, seg.get("start_ms", 0) + raw_len)
             restored_count += 1
-            print(f"[RESET-RAW] Restaurado a máster virgen 1.0x: {fname} ({raw_len} ms)")
+            print(f"[RESET-RAW] Restaurado a máster virgen 1.0x: {fname} ({raw_len} ms, slot={seg['end_ms'] - seg.get('start_ms', 0)} ms)")
 
     pm.save_project_metadata(req.project, metadata)
+    invalidate_waveform_cache(req.project, "dub")
 
     # Reconstruir la mezcla versionada
     processor = AudioProcessor(audio_path, audios_dir, metadata)

@@ -150,8 +150,12 @@ export const getOriginalWaveform = async (project: string, points = 1500) => {
 };
 
 
-export const getAllWaveforms = async (project: string, points = 1600): Promise<import('../types').AllWaveformsResponse> => {
-  const res = await api.get(`/waveform/${project}/all?points=${points}`);
+export const getAllWaveforms = async (
+  project: string,
+  points = 1600,
+  force = false
+): Promise<import('../types').AllWaveformsResponse> => {
+  const res = await api.get(`/waveform/${project}/all?points=${points}&force=${force}`);
   return res.data;
 };
 

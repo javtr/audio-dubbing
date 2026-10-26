@@ -15,6 +15,7 @@ import {
   ZoomIn,
   ZoomOut,
   RotateCcw,
+  RefreshCw,
   Scissors,
   Split,
   Download,
@@ -33,7 +34,10 @@ export const StudioTab: React.FC = () => {
     setSelectedSegmentId,
     setSegments,
     revertToMaster,
+    reloadProject,
   } = useProjectStore();
+
+  const [isRefreshingWaveforms, setIsRefreshingWaveforms] = useState(false);
 
   const [zoom, setZoom] = useState(() => {
     try {
@@ -138,6 +142,32 @@ export const StudioTab: React.FC = () => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isPlaying, play, pause]);
+
+  // Forzar actualización inmediata de ondas, silencios y mezcla
+  const handleRefreshWaveforms = async () => {
+    if (!currentProject || isRefreshingWaveforms) return;
+    setIsRefreshingWaveforms(true);
+    try {
+      console.log(`[StudioTab] Forzando recálculo de ondas y sincronización para '${currentProject}'...`);
+      // 1. Recargar metadatos del proyecto para sincronizar segmentos en la tabla
+      await reloadProject();
+
+      // 2. Forzar regeneración de ondas y silencios en el backend con force=true
+      const data = await api.getAllWaveforms(currentProject, 1600, true);
+      setOrigPeaks(data.orig_peaks || []);
+      setDubPeaks(data.dub_peaks || []);
+      setSilences(data.silences || []);
+
+      // 3. Forzar refresco de audio en el reproductor (cache-busting)
+      setDubbedAudioVersion(Date.now());
+      console.log('[StudioTab] Ondas, silencios y versión de audio actualizados con éxito.');
+    } catch (err: any) {
+      console.error('[StudioTab] Error al actualizar ondas:', err);
+      alert(`Error al actualizar ondas: ${err?.response?.data?.detail || err.message}`);
+    } finally {
+      setIsRefreshingWaveforms(false);
+    }
+  };
 
   // Zoom controls
   const handleZoomIn = () => setZoom((z) => Math.min(250, z * 1.3));
@@ -346,6 +376,16 @@ export const StudioTab: React.FC = () => {
 
         {/* Zoom controls & Export button */}
         <div className="flex items-center gap-3">
+          {/* Botón Actualizar Ondas */}
+          <button
+            onClick={handleRefreshWaveforms}
+            disabled={isRefreshingWaveforms}
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-neutral-900 hover:bg-neutral-800 text-sky-400 hover:text-sky-300 border border-neutral-800 hover:border-sky-500/40 transition flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+            title="Fuerza el análisis inmediato de nuevas secciones TTS, recalcula las formas de onda y refresca las marcas de silencio"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingWaveforms ? 'animate-spin' : ''}`} />
+            <span>{isRefreshingWaveforms ? 'Actualizando...' : 'Actualizar Ondas'}</span>
+          </button>
           <div className="flex items-center gap-1 bg-neutral-950 p-1 rounded-lg border border-neutral-800">
             <button
               onClick={handleZoomOut}
