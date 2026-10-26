@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useProjectStore } from '../stores/useProjectStore';
 import { TimelineCanvas } from '../components/studio/TimelineCanvas';
 import { SegmentRowTable } from '../components/studio/SegmentRowTable';
@@ -469,9 +470,10 @@ export const StudioTab: React.FC = () => {
       <SegmentRowTable onRefreshWaveforms={loadWaveforms} onOverlapsChange={setOverlapResult} />
 
       {/* Export Modal */}
-      {showExportModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-neutral-900 border border-neutral-800 rounded-xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+      {showExportModal &&
+        createPortal(
+          <div className="fixed inset-0 z-[9999] bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+            <div className="bg-neutral-900 border border-neutral-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 my-auto relative animate-in fade-in zoom-in-95 duration-150">
             <h3 className="text-base font-bold text-white flex items-center gap-2">
               <Download className="w-5 h-5 text-emerald-400" />
               <span>Exportar Mezcla Final</span>
@@ -524,7 +526,7 @@ export const StudioTab: React.FC = () => {
             <div className="flex items-center justify-end gap-2 pt-2">
               <button
                 onClick={() => setShowExportModal(false)}
-                className="px-4 py-2 rounded-lg text-xs font-semibold text-neutral-400 hover:text-white"
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-neutral-400 hover:text-white transition"
               >
                 Cancelar
               </button>
@@ -537,7 +539,8 @@ export const StudioTab: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

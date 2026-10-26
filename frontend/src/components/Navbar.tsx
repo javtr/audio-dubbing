@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useProjectStore } from '../stores/useProjectStore';
 import { Folder, Plus, Radio, RefreshCw, Sparkles, CheckCircle2, AlertTriangle } from 'lucide-react';
 import * as api from '../api/client';
@@ -137,66 +138,68 @@ export const Navbar: React.FC = () => {
         </div>
       </div>
 
-      {/* New Project Modal */}
-      {showNewModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-neutral-900 border border-neutral-800 rounded-xl max-w-md w-full p-6 shadow-2xl space-y-4">
-            <h3 className="text-base font-bold text-white">Crear Nuevo Proyecto</h3>
-            
-            <div className="space-y-3 text-sm">
-              <div>
-                <label className="block text-xs font-medium text-neutral-400 mb-1">Nombre del Proyecto</label>
-                <input
-                  type="text"
-                  placeholder="ej. tutorial_instalacion_plantillas"
-                  value={newProjectName}
-                  onChange={(e) => setNewProjectName(e.target.value)}
-                  className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-white outline-none focus:border-sky-500"
-                />
+      {/* New Project Modal (Portaled to document.body to avoid header backdrop-blur positioning traps) */}
+      {showNewModal &&
+        createPortal(
+          <div className="fixed inset-0 z-[9999] bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+            <div className="bg-neutral-900 border border-neutral-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 my-auto relative animate-in fade-in zoom-in-95 duration-150">
+              <h3 className="text-base font-bold text-white">Crear Nuevo Proyecto</h3>
+              
+              <div className="space-y-3 text-sm">
+                <div>
+                  <label className="block text-xs font-medium text-neutral-400 mb-1">Nombre del Proyecto</label>
+                  <input
+                    type="text"
+                    placeholder="ej. tutorial_instalacion_plantillas"
+                    value={newProjectName}
+                    onChange={(e) => setNewProjectName(e.target.value)}
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-white outline-none focus:border-sky-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-neutral-400 mb-1">Ruta del Audio o Video Original (.wav / .mp4)</label>
+                  <input
+                    type="text"
+                    placeholder="F:\Desarrollo\video.mp4"
+                    value={newMediaPath}
+                    onChange={(e) => setNewMediaPath(e.target.value)}
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-white outline-none focus:border-sky-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-neutral-400 mb-1">Idioma de Doblaje</label>
+                  <select
+                    value={newLang}
+                    onChange={(e) => setNewLang(e.target.value)}
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-white outline-none focus:border-sky-500"
+                  >
+                    <option value="en">Inglés (English)</option>
+                    <option value="pt">Portugués (Brasil)</option>
+                  </select>
+                </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-medium text-neutral-400 mb-1">Ruta del Audio o Video Original (.wav / .mp4)</label>
-                <input
-                  type="text"
-                  placeholder="F:\Desarrollo\video.mp4"
-                  value={newMediaPath}
-                  onChange={(e) => setNewMediaPath(e.target.value)}
-                  className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-white outline-none focus:border-sky-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-neutral-400 mb-1">Idioma de Doblaje</label>
-                <select
-                  value={newLang}
-                  onChange={(e) => setNewLang(e.target.value)}
-                  className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-white outline-none focus:border-sky-500"
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  onClick={() => setShowNewModal(false)}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold text-neutral-400 hover:text-white transition"
                 >
-                  <option value="en">Inglés (English)</option>
-                  <option value="pt">Portugués (Brasil)</option>
-                </select>
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleCreate}
+                  disabled={isCreating}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold bg-sky-500 hover:bg-sky-400 text-white transition disabled:opacity-50"
+                >
+                  {isCreating ? 'Creando...' : 'Crear Proyecto'}
+                </button>
               </div>
             </div>
-
-            <div className="flex items-center justify-end gap-2 pt-2">
-              <button
-                onClick={() => setShowNewModal(false)}
-                className="px-4 py-2 rounded-lg text-xs font-semibold text-neutral-400 hover:text-white"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handleCreate}
-                disabled={isCreating}
-                className="px-4 py-2 rounded-lg text-xs font-semibold bg-sky-500 hover:bg-sky-400 text-white transition disabled:opacity-50"
-              >
-                {isCreating ? 'Creando...' : 'Crear Proyecto'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
     </header>
   );
 };
