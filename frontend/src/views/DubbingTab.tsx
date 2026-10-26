@@ -1,5 +1,4 @@
-import React, { useRef, useState } from 'react';
-import { useVirtualizer } from '@tanstack/react-virtual';
+import React, { useState } from 'react';
 import { useProjectStore } from '../stores/useProjectStore';
 import { SegmentCardItem } from '../components/dubbing/SegmentCardItem';
 import * as api from '../api/client';
@@ -20,8 +19,6 @@ export const DubbingTab: React.FC = () => {
   const [filterMissingOnly, setFilterMissingOnly] = useState(false);
   const [defaultBatchRef, setDefaultBatchRef] = useState('ref_Conversational');
 
-  const parentRef = useRef<HTMLDivElement>(null);
-
   // Filter segments
   const filteredSegments = segments.filter((seg) => {
     if (filterMissingOnly && seg.clip_duration_ms && seg.clip_duration_ms > 0) return false;
@@ -33,14 +30,6 @@ export const DubbingTab: React.FC = () => {
       return inId || inOrig || inTrans;
     }
     return true;
-  });
-
-  // Virtualizer for smooth 60fps scrolling
-  const rowVirtualizer = useVirtualizer({
-    count: filteredSegments.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => 180,
-    overscan: 5,
   });
 
   const handleGenerateAll = async () => {
@@ -169,31 +158,17 @@ export const DubbingTab: React.FC = () => {
         </div>
       )}
 
-      {/* Virtualized Cards Container */}
-      <div
-        ref={parentRef}
-        className="h-[calc(100vh-250px)] overflow-y-auto pr-2 rounded-xl"
-      >
-        <div
-          className="w-full relative"
-          style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
-        >
-          {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-            const seg = filteredSegments[virtualRow.index];
-            return (
-              <div
-                key={seg.id}
-                className="absolute top-0 left-0 w-full pb-3"
-                style={{
-                  height: `${virtualRow.size}px`,
-                  transform: `translateY(${virtualRow.start}px)`,
-                }}
-              >
-                <SegmentCardItem segment={seg} index={virtualRow.index} />
-              </div>
-            );
-          })}
-        </div>
+      {/* Cards Container */}
+      <div className="h-[calc(100vh-250px)] overflow-y-auto pr-2 space-y-3 rounded-xl">
+        {filteredSegments.length === 0 ? (
+          <div className="p-12 text-center text-neutral-500 bg-neutral-900 border border-neutral-800 rounded-xl">
+            No se encontraron segmentos para mostrar con los filtros actuales.
+          </div>
+        ) : (
+          filteredSegments.map((seg, idx) => (
+            <SegmentCardItem key={seg.id} segment={seg} index={idx} />
+          ))
+        )}
       </div>
     </div>
   );
