@@ -143,10 +143,10 @@ export const ScriptTab: React.FC = () => {
   };
 
   return (
-    <div className="max-w-7xl mx-auto p-4 space-y-4">
+    <div className="max-w-7xl w-full mx-auto p-4 flex-1 min-h-0 flex flex-col gap-4">
       {/* Banner Notice / Live Status */}
       {(bannerNotice || liveStatusMessage) && (
-        <div className="bg-sky-500/10 border border-sky-500/30 text-sky-400 px-4 py-2.5 rounded-xl text-xs font-medium flex items-center gap-2 shadow-sm">
+        <div className="bg-sky-500/10 border border-sky-500/30 text-sky-400 px-4 py-2.5 rounded-xl text-xs font-medium flex items-center gap-2 shadow-sm shrink-0">
           <CheckCircle className="w-4 h-4 shrink-0 text-sky-400" />
           <span>{bannerNotice || liveStatusMessage}</span>
         </div>
@@ -155,7 +155,7 @@ export const ScriptTab: React.FC = () => {
       {/* Validation Health Banner */}
       {validation && (
         <div
-          className={`px-4 py-3 rounded-xl border flex items-center justify-between text-xs font-medium ${
+          className={`px-4 py-3 rounded-xl border flex items-center justify-between text-xs font-medium shrink-0 ${
             validation.has_errors
               ? 'bg-rose-500/10 border-rose-500/30 text-rose-300'
               : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
@@ -176,10 +176,10 @@ export const ScriptTab: React.FC = () => {
       )}
 
       {/* Dual Column Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Left Column: Whisper Transcribe */}
-        <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 flex flex-col h-[calc(100vh-210px)]">
-          <div className="flex items-center justify-between pb-3 border-b border-neutral-800">
+        <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 flex flex-col min-h-0 h-full">
+          <div className="flex items-center justify-between pb-3 border-b border-neutral-800 shrink-0">
             <h2 className="text-sm font-bold text-white flex items-center gap-2">
               <span>Paso 1A: Transcripción del Audio</span>
             </h2>
@@ -207,13 +207,13 @@ export const ScriptTab: React.FC = () => {
             value={transcript}
             onChange={(e) => setTranscript(e.target.value)}
             placeholder="La transcripción de Whisper aparecerá aquí..."
-            className="flex-1 w-full bg-neutral-950 border border-neutral-800 rounded-lg p-3 mt-3 text-xs font-mono text-neutral-300 outline-none resize-none focus:border-sky-500"
+            className="flex-1 min-h-0 w-full bg-neutral-950 border border-neutral-800 rounded-lg p-3 mt-3 text-xs font-mono text-neutral-300 outline-none resize-none focus:border-sky-500"
           />
         </div>
 
         {/* Right Column: Gemini JSON & Whisper Alignment & Re-translation */}
-        <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 flex flex-col h-[calc(100vh-210px)]">
-          <div className="flex items-center justify-between pb-3 border-b border-neutral-800 flex-wrap gap-2">
+        <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 flex flex-col min-h-0 h-full">
+          <div className="flex items-center justify-between pb-3 border-b border-neutral-800 flex-wrap gap-2 shrink-0">
             <h2 className="text-sm font-bold text-white flex items-center gap-2">
               <span>Paso 1B: JSON y Tiempos Acústicos</span>
             </h2>
@@ -277,7 +277,7 @@ export const ScriptTab: React.FC = () => {
             value={jsonText}
             onChange={(e) => setJsonText(e.target.value)}
             placeholder="Pega aquí el JSON devuelto por Gemini..."
-            className="flex-1 w-full bg-neutral-950 border border-neutral-800 rounded-lg p-3 mt-3 text-xs font-mono text-emerald-400 outline-none resize-none focus:border-sky-500"
+            className="flex-1 min-h-0 w-full bg-neutral-950 border border-neutral-800 rounded-lg p-3 mt-3 text-xs font-mono text-emerald-400 outline-none resize-none focus:border-sky-500"
           />
         </div>
       </div>

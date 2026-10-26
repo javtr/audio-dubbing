@@ -41,7 +41,7 @@ export const Navbar: React.FC = () => {
   };
 
   return (
-    <header className="border-b border-neutral-800 bg-neutral-900/90 backdrop-blur sticky top-0 z-50">
+    <header className="border-b border-neutral-800 bg-neutral-900/90 backdrop-blur sticky top-0 z-50 shrink-0">
       <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between gap-4">
         {/* Left: Brand & Project Selector */}
         <div className="flex items-center gap-4">

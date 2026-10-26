@@ -65,9 +65,9 @@ export const DubbingTab: React.FC = () => {
   };
 
   return (
-    <div className="max-w-7xl mx-auto p-4 space-y-4">
+    <div className="max-w-7xl w-full mx-auto p-4 flex-1 min-h-0 flex flex-col gap-4">
       {/* Top Action Bar */}
-      <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4">
+      <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4 shrink-0">
         <div className="flex items-center gap-3">
           <button
             onClick={handleGenerateAll}
@@ -139,7 +139,7 @@ export const DubbingTab: React.FC = () => {
 
       {/* Progress Bar (During batch TTS) */}
       {liveProgress && (
-        <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 space-y-2">
+        <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 space-y-2 shrink-0">
           <div className="flex items-center justify-between text-xs font-semibold">
             <span className="text-sky-400 flex items-center gap-2">
               <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -159,7 +159,7 @@ export const DubbingTab: React.FC = () => {
       )}
 
       {/* Cards Container */}
-      <div className="h-[calc(100vh-250px)] overflow-y-auto pr-2 flex flex-col gap-4 rounded-xl">
+      <div className="flex-1 min-h-0 overflow-y-auto pr-2 flex flex-col gap-4 rounded-xl pb-2">
         {filteredSegments.length === 0 ? (
           <div className="p-12 text-center text-neutral-500 bg-neutral-900 border border-neutral-800 rounded-xl">
             No se encontraron segmentos para mostrar con los filtros actuales.

@@ -23,14 +23,14 @@ export const App: React.FC = () => {
   }, [loadProjectsList, checkTTS]);
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col font-sans">
+    <div className="h-screen bg-neutral-950 text-neutral-100 flex flex-col font-sans overflow-hidden">
       <Navbar />
 
-      <main className="flex-1 pb-10">
-        <div className={activeTab === 'script' ? 'block' : 'hidden'}>
+      <main className="flex-1 min-h-0 flex flex-col overflow-y-auto">
+        <div className={activeTab === 'script' ? 'flex-1 min-h-0 flex flex-col' : 'hidden'}>
           <ScriptTab />
         </div>
-        <div className={activeTab === 'dubbing' ? 'block' : 'hidden'}>
+        <div className={activeTab === 'dubbing' ? 'flex-1 min-h-0 flex flex-col' : 'hidden'}>
           <DubbingTab />
         </div>
         <div className={activeTab === 'studio' ? 'block' : 'hidden'}>
