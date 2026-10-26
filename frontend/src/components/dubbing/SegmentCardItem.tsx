@@ -79,7 +79,7 @@ export const SegmentCardItem: React.FC<Props> = ({ segment, index }) => {
   };
 
   return (
-    <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 transition hover:border-neutral-700 space-y-3">
+    <div className="w-full shrink-0 bg-neutral-900 border border-neutral-800 rounded-xl p-4 transition hover:border-neutral-700 flex flex-col gap-3">
       {/* Top Header */}
       <div className="flex items-center justify-between text-xs">
         <div className="flex items-center gap-2">

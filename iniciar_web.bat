@@ -12,8 +12,8 @@ echo.
 :: Abrir navegador tras 1.5 segundos en segundo plano
 start "" cmd /c "timeout /t 2 /nobreak >nul && start http://127.0.0.1:8000"
 
-:: Iniciar servidor FastAPI (sirve la API y la app React)
-python -m uvicorn backend.server:app --host 127.0.0.1 --port 8000
+:: Iniciar servidor FastAPI con auto-recarga (sirve la API y la app React)
+python -m uvicorn backend.server:app --host 127.0.0.1 --port 8000 --reload
 
 pause
 

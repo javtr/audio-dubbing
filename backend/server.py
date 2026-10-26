@@ -1280,6 +1280,20 @@ def export_project(req: ExportRequest, background_tasks: BackgroundTasks):
 dist_dir = PROJECT_ROOT / "frontend" / "dist"
 if dist_dir.exists():
     from fastapi.staticfiles import StaticFiles
+
+    @app.get("/")
+    def serve_index():
+        index_file = dist_dir / "index.html"
+        return FileResponse(
+            index_file,
+            media_type="text/html",
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0"
+            }
+        )
+
     app.mount("/", StaticFiles(directory=str(dist_dir), html=True), name="static")
 
 

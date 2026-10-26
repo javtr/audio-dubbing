@@ -159,7 +159,7 @@ export const DubbingTab: React.FC = () => {
       )}
 
       {/* Cards Container */}
-      <div className="h-[calc(100vh-250px)] overflow-y-auto pr-2 space-y-3 rounded-xl">
+      <div className="h-[calc(100vh-250px)] overflow-y-auto pr-2 flex flex-col gap-4 rounded-xl">
         {filteredSegments.length === 0 ? (
           <div className="p-12 text-center text-neutral-500 bg-neutral-900 border border-neutral-800 rounded-xl">
             No se encontraron segmentos para mostrar con los filtros actuales.
