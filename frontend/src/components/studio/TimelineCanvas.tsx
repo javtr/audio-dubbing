@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { Segment, SilenceGap } from '../../types';
+import { detectOverlaps, CollisionRegion, SegmentCollisionInfo } from '../../utils/overlapDetector';
 
 interface Props {
   segments: Segment[];
@@ -16,6 +17,8 @@ interface Props {
   origPeaks?: number[];    // [min0, max0, min1, max1, ...]
   dubPeaks?: number[];     // [min0, max0, min1, max1, ...]
   silences?: SilenceGap[];
+  collisionRegions?: CollisionRegion[];
+  segmentCollisions?: Record<string, SegmentCollisionInfo>;
 }
 
 export const TimelineCanvas: React.FC<Props> = ({
@@ -33,6 +36,8 @@ export const TimelineCanvas: React.FC<Props> = ({
   origPeaks = [],
   dubPeaks = [],
   silences = [],
+  collisionRegions,
+  segmentCollisions,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -243,7 +248,61 @@ export const TimelineCanvas: React.FC<Props> = ({
       }
     });
 
-    // ================= 5. SEGMENT BOXES, CUT MARKS & SELECTION =================
+    // ================= 5. OVERLAP & COLLISION REGIONS (Pista Doblada) =================
+    const dynamicOverlapData = (!collisionRegions || !segmentCollisions)
+      ? detectOverlaps(segments)
+      : null;
+    const activeCollisions = collisionRegions || dynamicOverlapData?.collisionRegions || [];
+    const activeSegCollisions = segmentCollisions || dynamicOverlapData?.segmentCollisions || {};
+
+    activeCollisions.forEach((col) => {
+      const sX = msToX(col.startMs);
+      const eX = msToX(col.endMs);
+      if (eX < 0 || sX > width) return;
+
+      const spanW = Math.max(4, eX - sX);
+
+      // Sombreado rojo intenso de advertencia
+      ctx.fillStyle = 'rgba(239, 68, 68, 0.45)';
+      ctx.fillRect(sX, TRACK2_Y + 2, spanW, TRACK2_H - 4);
+
+      // Rayado diagonal rojo de peligro (///)
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      for (let hX = sX; hX < sX + spanW; hX += 8) {
+        ctx.moveTo(hX, TRACK2_Y + TRACK2_H - 2);
+        ctx.lineTo(Math.min(hX + 10, sX + spanW), TRACK2_Y + 2);
+      }
+      ctx.stroke();
+
+      // Borde punteado rojo neón
+      ctx.strokeStyle = '#f43f5e';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 2]);
+      ctx.strokeRect(sX, TRACK2_Y + 2, spanW, TRACK2_H - 4);
+      ctx.setLineDash([]);
+
+      // Badge flotante con milisegundos de invasión
+      if (spanW > 24) {
+        const badgeX = sX + spanW / 2;
+        const badgeY = TRACK2_Y + TRACK2_H - 16;
+        const text = `⚠️ +${Math.round(col.overlapMs)}ms`;
+
+        ctx.fillStyle = '#b91c1c';
+        ctx.beginPath();
+        ctx.roundRect(badgeX - 25, badgeY - 9, 50, 16, 4);
+        ctx.fill();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 9px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(text, badgeX, badgeY + 3);
+        ctx.textAlign = 'left';
+      }
+    });
+
+    // ================= 6. SEGMENT BOXES, CUT MARKS & SELECTION =================
     segments.forEach((seg) => {
       const sX = msToX(seg.start_ms);
       const eX = msToX(seg.end_ms);
@@ -253,13 +312,25 @@ export const TimelineCanvas: React.FC<Props> = ({
       const isSelected = selectedSegmentId === String(seg.id);
       const ratio = seg.current_speed_ratio || 1.0;
       const hasAudio = seg.clip_duration_ms && seg.clip_duration_ms > 0;
+      const colInfo = activeSegCollisions[String(seg.id)];
+      const hasCollision = Boolean(colInfo && colInfo.outgoing.length > 0);
+
+      // Collision Warning Outline on Segment Box
+      if (hasCollision && !isSelected) {
+        ctx.fillStyle = 'rgba(239, 68, 68, 0.15)';
+        ctx.fillRect(sX, TRACK2_Y + 2, blockW, TRACK2_H - 4);
+
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(sX, TRACK2_Y + 2, blockW, TRACK2_H - 4);
+      }
 
       // Selection Highlight (Neon Yellow)
       if (isSelected) {
         ctx.fillStyle = 'rgba(255, 230, 0, 0.22)';
         ctx.fillRect(sX, TRACK2_Y + 2, blockW, TRACK2_H - 4);
 
-        ctx.strokeStyle = '#ffe600';
+        ctx.strokeStyle = hasCollision ? '#ef4444' : '#ffe600';
         ctx.lineWidth = 2.5;
         ctx.strokeRect(sX, TRACK2_Y + 2, blockW, TRACK2_H - 4);
       }
@@ -278,13 +349,15 @@ export const TimelineCanvas: React.FC<Props> = ({
 
       // Segment text and info pill
       if (blockW > 35) {
-        ctx.fillStyle = isSelected ? '#ffe600' : '#ffffff';
+        const label = hasCollision
+          ? `[${seg.id}] ${ratio.toFixed(2)}x ⚠️ Traslape`
+          : `[${seg.id}] ${ratio.toFixed(2)}x`;
+        ctx.fillStyle = isSelected ? '#ffe600' : hasCollision ? '#f87171' : '#ffffff';
         ctx.font = 'bold 10px sans-serif';
-        const label = `[${seg.id}] ${ratio.toFixed(2)}x`;
         ctx.fillText(label, sX + 4, TRACK2_Y + TRACK2_H - 10);
 
         if (blockW > 80) {
-          ctx.fillStyle = '#a3a3a3';
+          ctx.fillStyle = hasCollision ? '#fca5a5' : '#a3a3a3';
           ctx.font = '9px sans-serif';
           const textPreview = seg.translated.slice(0, Math.floor(blockW / 7));
           ctx.fillText(textPreview, sX + 4, TRACK2_Y + 36);
@@ -327,7 +400,7 @@ export const TimelineCanvas: React.FC<Props> = ({
       ctx.closePath();
       ctx.fill();
     }
-  }, [segments, totalDurationMs, playheadMs, zoom, viewOffsetMs, selectedSegmentId, origPeaks, dubPeaks, silences]);
+  }, [segments, totalDurationMs, playheadMs, zoom, viewOffsetMs, selectedSegmentId, origPeaks, dubPeaks, silences, collisionRegions, segmentCollisions]);
 
   // Click & Pan Handlers
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {

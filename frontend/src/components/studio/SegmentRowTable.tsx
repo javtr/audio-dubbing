@@ -2,13 +2,15 @@ import React, { useState, useEffect } from 'react';
 import { Segment } from '../../types';
 import { useProjectStore } from '../../stores/useProjectStore';
 import * as api from '../../api/client';
-import { Play, Pause, Save, Trash2, Zap, RotateCcw, Check, RefreshCw } from 'lucide-react';
+import { Play, Pause, Save, Trash2, Zap, RotateCcw, Check, RefreshCw, AlertTriangle } from 'lucide-react';
+import { detectOverlaps, OverlapAnalysisResult } from '../../utils/overlapDetector';
 
 interface Props {
   onRefreshWaveforms: () => void;
+  onOverlapsChange?: (result: OverlapAnalysisResult) => void;
 }
 
-export const SegmentRowTable: React.FC<Props> = ({ onRefreshWaveforms }) => {
+export const SegmentRowTable: React.FC<Props> = ({ onRefreshWaveforms, onOverlapsChange }) => {
   const {
     currentProject,
     segments,
@@ -58,6 +60,13 @@ export const SegmentRowTable: React.FC<Props> = ({ onRefreshWaveforms }) => {
       return nextRatios;
     });
   }, [segments]);
+
+  // Análisis dinámico y en tiempo real de traslapes/colisiones entre segmentos
+  const overlapAnalysis = detectOverlaps(segments, localStarts, localRatios);
+
+  useEffect(() => {
+    onOverlapsChange?.(overlapAnalysis);
+  }, [overlapAnalysis, onOverlapsChange]);
 
   // Reproducir fragmento individual con cache-buster dinámico
   const handleTogglePlay = (seg: Segment) => {
@@ -202,14 +211,25 @@ export const SegmentRowTable: React.FC<Props> = ({ onRefreshWaveforms }) => {
     <div className="bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden text-xs">
       {/* Table Header Bar */}
       <div className="px-4 py-3 bg-neutral-950 border-b border-neutral-800 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="font-bold text-neutral-200">Ajuste Fino de Segmentos ({segments.length})</span>
+          {overlapAnalysis.hasOverlaps ? (
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40 flex items-center gap-1 animate-pulse">
+              <AlertTriangle className="w-3 h-3 text-rose-400" />
+              <span>{overlapAnalysis.totalOverlaps} {overlapAnalysis.totalOverlaps === 1 ? 'traslape' : 'traslapes'}</span>
+            </span>
+          ) : (
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+              <Check className="w-3 h-3" />
+              <span>Sin traslapes</span>
+            </span>
+          )}
           <span className="text-[11px] text-neutral-500 font-normal">
             Modifica tiempos de inicio, ratios de velocidad y pulsa "Ajustar"
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {selectedSegmentId && (
             <button
               onClick={handleDeleteSelected}
@@ -243,6 +263,11 @@ export const SegmentRowTable: React.FC<Props> = ({ onRefreshWaveforms }) => {
 
           const isGoodRatio = ratio >= 0.90 && ratio <= 1.20;
 
+          const colInfo = overlapAnalysis.segmentCollisions[segId];
+          const hasOutgoingOverlap = Boolean(colInfo && colInfo.outgoing.length > 0);
+          const hasIncomingOverlap = Boolean(colInfo && colInfo.incoming.length > 0);
+          const isOverlapping = hasOutgoingOverlap || hasIncomingOverlap;
+
           return (
             <div
               key={seg.id}
@@ -250,6 +275,8 @@ export const SegmentRowTable: React.FC<Props> = ({ onRefreshWaveforms }) => {
               className={`p-2.5 rounded-xl border transition flex flex-wrap items-center justify-between gap-3 ${
                 isSelected
                   ? 'border-yellow-400 bg-yellow-400/10 shadow-sm shadow-yellow-400/10'
+                  : isOverlapping
+                  ? 'border-rose-500/80 bg-rose-950/25 shadow-sm shadow-rose-500/10 hover:border-rose-400'
                   : 'border-neutral-800/60 bg-neutral-950/60 hover:border-neutral-700'
               }`}
             >
@@ -269,9 +296,29 @@ export const SegmentRowTable: React.FC<Props> = ({ onRefreshWaveforms }) => {
                 </button>
 
                 <div className="flex flex-col">
-                  <span className="font-mono text-[11px] font-bold text-neutral-300">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-mono text-[11px] font-bold text-neutral-300">
                     {seg.filename} <span className="text-neutral-500">[{seg.id}]</span>
                   </span>
+                    {hasOutgoingOverlap && (
+                      <span
+                        className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40 flex items-center gap-1 shrink-0 animate-pulse"
+                        title={`Este audio se monta ${Math.round(colInfo.outgoing[0].overlapMs)}ms sobre el segmento [${colInfo.outgoing[0].otherId}].`}
+                      >
+                        <AlertTriangle className="w-3 h-3 text-rose-400" />
+                        <span>Traslape: +{Math.round(colInfo.outgoing[0].overlapMs)}ms con [{colInfo.outgoing[0].otherId}]</span>
+                      </span>
+                    )}
+                    {!hasOutgoingOverlap && hasIncomingOverlap && (
+                      <span
+                        className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-rose-500/10 text-rose-400/90 border border-rose-500/20 flex items-center gap-1 shrink-0"
+                        title={`Invadido ${Math.round(colInfo.incoming[0].overlapMs)}ms por el segmento [${colInfo.incoming[0].otherId}].`}
+                      >
+                        <AlertTriangle className="w-3 h-3 text-rose-400" />
+                        <span>Invadido por [{colInfo.incoming[0].otherId}]</span>
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex-1">

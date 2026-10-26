@@ -18,7 +18,10 @@ import {
   Split,
   Download,
   Sparkles,
+  AlertTriangle,
+  Check,
 } from 'lucide-react';
+import { OverlapAnalysisResult } from '../utils/overlapDetector';
 
 export const StudioTab: React.FC = () => {
   const {
@@ -52,6 +55,12 @@ export const StudioTab: React.FC = () => {
   const [origPeaks, setOrigPeaks] = useState<number[]>([]);
   const [dubPeaks, setDubPeaks] = useState<number[]>([]);
   const [silences, setSilences] = useState<SilenceGap[]>([]);
+  const [overlapResult, setOverlapResult] = useState<OverlapAnalysisResult>({
+    hasOverlaps: false,
+    totalOverlaps: 0,
+    collisionRegions: [],
+    segmentCollisions: {},
+  });
 
   // Export Modal State
   const [showExportModal, setShowExportModal] = useState(false);
@@ -220,6 +229,14 @@ export const StudioTab: React.FC = () => {
     }
   };
 
+  const handleScrollToFirstCollision = () => {
+    if (!overlapResult.collisionRegions || overlapResult.collisionRegions.length === 0) return;
+    const firstCol = overlapResult.collisionRegions[0];
+    setSelectedSegmentId(firstCol.segIdA);
+    setViewOffsetMs(Math.max(0, firstCol.startMs - 2000));
+    seek(firstCol.startMs);
+  };
+
   // Format timecode (mm:ss.ms)
   const formatTimecode = (ms: number) => {
     const totalSecs = Math.max(0, ms) / 1000;
@@ -290,6 +307,23 @@ export const StudioTab: React.FC = () => {
           </button>
         </div>
 
+        {/* Overlap Status / Quick Navigation Button */}
+        {overlapResult.hasOverlaps ? (
+          <button
+            onClick={handleScrollToFirstCollision}
+            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-rose-600/25 hover:bg-rose-600/40 border border-rose-500/60 text-rose-300 transition flex items-center gap-1.5 shadow-sm shadow-rose-600/20 animate-pulse"
+            title="Haz clic para saltar al primer traslape y enfocarlo en la línea de tiempo"
+          >
+            <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+            <span>{overlapResult.totalOverlaps} {overlapResult.totalOverlaps === 1 ? 'traslape detectado' : 'traslapes detectados'}</span>
+          </button>
+        ) : (
+          <div className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center gap-1">
+            <Check className="w-3.5 h-3.5" />
+            <span>0 traslapes</span>
+          </div>
+        )}
+
         {/* Zoom controls & Export button */}
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1 bg-neutral-950 p-1 rounded-lg border border-neutral-800">
@@ -342,6 +376,8 @@ export const StudioTab: React.FC = () => {
           origPeaks={origPeaks}
           dubPeaks={dubPeaks}
           silences={silences}
+          collisionRegions={overlapResult.collisionRegions}
+          segmentCollisions={overlapResult.segmentCollisions}
         />
 
         {/* Horizontal Timeline Scrollbar */}
@@ -430,7 +466,7 @@ export const StudioTab: React.FC = () => {
       </div>
 
       {/* Segment Fine Tuning Table (SegmentRowTable) */}
-      <SegmentRowTable onRefreshWaveforms={loadWaveforms} />
+      <SegmentRowTable onRefreshWaveforms={loadWaveforms} onOverlapsChange={setOverlapResult} />
 
       {/* Export Modal */}
       {showExportModal && (

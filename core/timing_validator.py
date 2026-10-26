@@ -58,6 +58,17 @@ class TimingValidator:
             if word_count > 80:
                 issues.append(f"Segmento muy largo ({word_count} palabras, recomendado entre 30 y 60, máx 80)")
 
+            # 6. Traslape de audio con el siguiente segmento
+            if i < len(segments_data) - 1:
+                next_seg = segments_data[i + 1]
+                next_start = next_seg.get("start_ms", 0)
+                clip_dur = seg.get("clip_duration_ms", 0)
+                audio_end = start_ms + (clip_dur if clip_dur > 0 else dur_ms)
+                if audio_end > next_start + 20:
+                    overlap_ms = audio_end - next_start
+                    next_id = next_seg.get("id", f"seg-{i+1}")
+                    issues.append(f"Traslape de audio: se monta {overlap_ms}ms sobre el segmento [{next_id}]")
+
             if issues:
                 anomalies[seg_id] = issues
 
