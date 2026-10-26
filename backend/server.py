@@ -305,7 +305,7 @@ def create_project(req: CreateProjectRequest):
     if not os.path.exists(req.media_path):
         raise HTTPException(status_code=400, detail=f"No se encontró el archivo de medios: {req.media_path}")
     try:
-        paths = pm.create_project(name, req.media_path, lang=req.language)
+        paths = pm.create_project(name, req.media_path, target_language=req.language, lang=req.language)
         return {"status": "ok", "project": name, "paths": paths}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

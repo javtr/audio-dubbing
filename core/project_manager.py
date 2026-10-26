@@ -83,12 +83,13 @@ class ProjectManager:
             "config_file": os.path.join(proj_root, "config.json")
         }
 
-    def create_project(self, name, source_file=None, target_language="en"):
+    def create_project(self, name, source_file=None, target_language="en", lang=None):
         """
         Crea un nuevo proyecto.
         Si se pasa source_file (.mp4 o audio), copia o extrae el audio a 'original.wav'.
         Guarda config.json con el idioma seleccionado ('en' o 'pt').
         """
+        selected_lang = lang or target_language or "en"
         safe_name = self.sanitize_name(name)
         proj_root = os.path.join(self.projects_dir, safe_name)
         os.makedirs(proj_root, exist_ok=True)
@@ -98,7 +99,7 @@ class ProjectManager:
         config_file = os.path.join(proj_root, "config.json")
         config_data = {
             "name": safe_name,
-            "target_language": target_language or "en"
+            "target_language": selected_lang
         }
         with open(config_file, "w", encoding="utf-8") as f:
             json.dump(config_data, f, indent=2, ensure_ascii=False)
