@@ -42,6 +42,27 @@ class ProjectManager:
         audios_dir = os.path.join(proj_root, "audios")
         metadata_file = os.path.join(proj_root, "secciones.json")
 
+        # Auto-recuperacion si audios/ esta vacio pero existe una copia como 'audios (2)'
+        if os.path.exists(proj_root):
+            wav_count = len([f for f in os.listdir(audios_dir) if f.endswith(".wav")]) if os.path.exists(audios_dir) else 0
+            if wav_count == 0:
+                for alt_name in os.listdir(proj_root):
+                    if alt_name.lower().startswith("audios") and alt_name != "audios":
+                        alt_dir = os.path.join(proj_root, alt_name)
+                        if os.path.isdir(alt_dir):
+                            alt_wavs = [f for f in os.listdir(alt_dir) if f.endswith(".wav")]
+                            if len(alt_wavs) > 0:
+                                os.makedirs(audios_dir, exist_ok=True)
+                                for item in os.listdir(alt_dir):
+                                    s_item = os.path.join(alt_dir, item)
+                                    d_item = os.path.join(audios_dir, item)
+                                    if os.path.isdir(s_item):
+                                        shutil.copytree(s_item, d_item, dirs_exist_ok=True)
+                                    else:
+                                        shutil.copy2(s_item, d_item)
+                                print(f"[PROJECT-INFO] Restaurados {len(alt_wavs)} audios desde '{alt_name}' a 'audios/' en {project_name}")
+                                break
+
         # Buscar archivo de audio original (.wav o .mp3)
         audio_file = None
         for ext in (".wav", ".mp3", ".m4a", ".flac"):

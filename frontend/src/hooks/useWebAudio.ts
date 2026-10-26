@@ -136,19 +136,29 @@ export function useWebAudio(originalUrl?: string, dubbedMixUrl?: string) {
     let animId: number;
 
     const updateTime = () => {
-      if (origAudioRef.current && isPlaying) {
-        const curSec = origAudioRef.current.currentTime;
-        setCurrentTimeMs(Math.round(curSec * 1000));
+      if (isPlaying) {
+        const masterEl =
+          origAudioRef.current && origAudioRef.current.src && !origAudioRef.current.paused
+            ? origAudioRef.current
+            : dubAudioRef.current && dubAudioRef.current.src && !dubAudioRef.current.paused
+            ? dubAudioRef.current
+            : origAudioRef.current || dubAudioRef.current;
 
-        // Lock dubbed track to original track if drift exceeds 120ms
-        if (
-          dubAudioRef.current &&
-          !dubAudioRef.current.paused &&
-          dubAudioRef.current.readyState >= 2
-        ) {
-          const drift = Math.abs(dubAudioRef.current.currentTime - curSec);
-          if (drift > 0.12) {
-            dubAudioRef.current.currentTime = curSec;
+        if (masterEl) {
+          const curSec = masterEl.currentTime;
+          setCurrentTimeMs(Math.round(curSec * 1000));
+
+          // Corregir desfase solo si supera 350ms para evitar micro-cortes continuos de buffer
+          if (
+            masterEl === origAudioRef.current &&
+            dubAudioRef.current &&
+            !dubAudioRef.current.paused &&
+            dubAudioRef.current.readyState >= 2
+          ) {
+            const drift = Math.abs(dubAudioRef.current.currentTime - curSec);
+            if (drift > 0.35) {
+              dubAudioRef.current.currentTime = curSec;
+            }
           }
         }
 

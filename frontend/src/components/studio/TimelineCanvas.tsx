@@ -44,6 +44,24 @@ export const TimelineCanvas: React.FC<Props> = ({
   const [hoveredSegment, setHoveredSegment] = useState<Segment | null>(null);
   const [isPanning, setIsPanning] = useState(false);
   const panStartRef = useRef<{ x: number; offset: number }>({ x: 0, offset: 0 });
+  const [canvasWidth, setCanvasWidth] = useState(1400);
+
+  // Sincronizar el ancho interno del canvas al contenedor real con 1:1 pixel ratio
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const updateSize = () => {
+      if (containerRef.current) {
+        const w = containerRef.current.clientWidth;
+        if (w > 0 && w !== canvasWidth) {
+          setCanvasWidth(w);
+        }
+      }
+    };
+    updateSize();
+    const ro = new ResizeObserver(updateSize);
+    ro.observe(containerRef.current);
+    return () => ro.disconnect();
+  }, [canvasWidth]);
 
   const RULER_H = 26;
   const TRACK1_Y = 30;
@@ -400,12 +418,13 @@ export const TimelineCanvas: React.FC<Props> = ({
       ctx.closePath();
       ctx.fill();
     }
-  }, [segments, totalDurationMs, playheadMs, zoom, viewOffsetMs, selectedSegmentId, origPeaks, dubPeaks, silences, collisionRegions, segmentCollisions]);
+  }, [segments, totalDurationMs, playheadMs, zoom, viewOffsetMs, selectedSegmentId, origPeaks, dubPeaks, silences, collisionRegions, segmentCollisions, canvasWidth]);
 
-  // Click & Pan Handlers
+  // Click & Pan Handlers con escalado exacto de coordenadas
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
+    const scaleX = canvasRef.current && rect.width > 0 ? canvasRef.current.width / rect.width : 1;
+    const x = (e.clientX - rect.left) * scaleX;
     const clickedMs = viewOffsetMs + (x / zoom) * 1000;
 
     if (e.button === 1 || e.altKey) {
@@ -437,7 +456,8 @@ export const TimelineCanvas: React.FC<Props> = ({
     }
 
     const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
+    const scaleX = canvasRef.current && rect.width > 0 ? canvasRef.current.width / rect.width : 1;
+    const x = (e.clientX - rect.left) * scaleX;
     const hoverMs = viewOffsetMs + (x / zoom) * 1000;
     const target = segments.find((s) => hoverMs >= s.start_ms && hoverMs <= s.end_ms);
     setHoveredSegment(target || null);
@@ -451,7 +471,7 @@ export const TimelineCanvas: React.FC<Props> = ({
     <div ref={containerRef} className="relative w-full overflow-hidden select-none">
       <canvas
         ref={canvasRef}
-        width={1400}
+        width={canvasWidth}
         height={TOTAL_H}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}

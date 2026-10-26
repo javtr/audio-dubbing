@@ -95,9 +95,10 @@ export const StudioTab: React.FC = () => {
   // Fetch all waveforms (both tracks) and silences
   const loadWaveforms = useCallback(async () => {
     if (!currentProject) return;
+    const reqProj = currentProject;
     try {
-      console.log(`[StudioTab] Recargando formas de onda para '${currentProject}'...`);
-      const data = await api.getAllWaveforms(currentProject, 1600);
+      console.log(`[StudioTab] Recargando formas de onda para '${reqProj}'...`);
+      const data = await api.getAllWaveforms(reqProj, 1600);
       setOrigPeaks(data.orig_peaks || []);
       setDubPeaks(data.dub_peaks || []);
       setSilences(data.silences || []);
@@ -110,6 +111,11 @@ export const StudioTab: React.FC = () => {
   }, [currentProject]);
 
   useEffect(() => {
+    // Limpiar picos previos al cambiar de proyecto para evitar visualizaciones fantasma
+    setOrigPeaks([]);
+    setDubPeaks([]);
+    setSilences([]);
+    setViewOffsetMs(0);
     loadWaveforms();
     if (currentProject) {
       setOutputPath(`F:\\Desarrollo\\${currentProject}_doblado.mp4`);

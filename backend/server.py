@@ -1175,7 +1175,7 @@ def get_all_waveforms(project: str, points: int = 1600):
     for s in metadata:
         s_ms = s.get("start_ms", 0)
         e_ms = s.get("end_ms", 0)
-        clip_dur = s.get("clip_duration_ms", 0)
+        clip_dur = s.get("clip_duration_ms") or 0
 
         # Solo si falta la duración en metadatos se lee del archivo en disco
         if clip_dur == 0:
@@ -1236,6 +1236,7 @@ def adjust_segment_ratio(req: AdjustRatioRequest):
     )
 
     pm.save_project_metadata(req.project, metadata)
+    invalidate_waveform_cache(req.project, "dub")
     
     # Reconstruir la mezcla inmediatamente con la nueva versión
     audio_path = paths.get("audio_file")
@@ -1567,13 +1568,12 @@ def auto_split_segment(req: AutoSplitRequest):
 
         pm.save_project_metadata(req.project, metadata)
 
-        # Invalidar caché de mezcla de audio
-        mix_file = os.path.join(paths["root"], "mix", "dubbed_mix.mp3")
-        if os.path.exists(mix_file):
-            try:
-                os.remove(mix_file)
-            except Exception:
-                pass
+        # Invalidar caché de mezcla y recalcular versión limpia
+        invalidate_waveform_cache(req.project, "dub")
+        audio_path = paths.get("audio_file")
+        audios_dir = paths.get("audios_dir")
+        processor = AudioProcessor(audio_path, audios_dir, metadata)
+        export_dubbed_mix_versioned(processor, paths, req.project)
 
         val = TimingValidator.validate(metadata)
         return {
