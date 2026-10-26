@@ -121,23 +121,27 @@ def build_atempo_filter(ratio: float) -> str:
 
 
 def calculate_segment_speed_ratio(raw_duration_ms: int, target_span_ms: int, manual_ratio: Optional[float] = None) -> float:
-    """Calcula ratio de velocidad con límite inferior 0.87x y sin límite superior."""
+    """Calcula ratio de velocidad con límite inferior 0.87x, margen de 100ms y redondeo hacia arriba (ceil)."""
     if manual_ratio is not None and manual_ratio > 0:
         return round(float(manual_ratio), 2)
     if target_span_ms <= 0 or raw_duration_ms <= 0:
         return 1.0
-    
-    raw_ratio = raw_duration_ms / float(target_span_ms)
-    
-    # Si necesita acelerar (> 1.0): sin límite superior para evitar solapes
+
+    import math
+    SAFETY_MARGIN_MS = 100
+    effective_span = max(100, target_span_ms - SAFETY_MARGIN_MS)
+
+    raw_ratio = raw_duration_ms / float(effective_span)
+
+    # Si necesita acelerar (> 1.0): ceil para asegurar que el audio no se pase del margen
     if raw_ratio > 1.0:
-        return round(raw_ratio, 2)
-    
-    # Si necesita desacelerar (< 1.0): NUNCA bajar de 0.87x
+        return math.ceil(raw_ratio * 100) / 100.0
+
+    # Si necesita desacelerar (< 1.0): NUNCA bajar de 0.87x y ceil para que no se alargue de más
     if raw_ratio < 0.87:
         return 0.87
-        
-    return round(raw_ratio, 2)
+
+    return math.ceil(raw_ratio * 100) / 100.0
 
 
 def process_segment_from_raw(paths: dict, segment: dict, requested_ratio: Optional[float] = None, is_manual: bool = False):
@@ -1410,9 +1414,9 @@ def auto_calculate_ratios(req: AutoRatiosRequest):
     metadata = pm.load_project_metadata(req.project)
     audio_path = paths.get("audio_file")
     audios_dir = paths.get("audios_dir")
-    
-    print(f"[AUTO-RATIOS] Calculando ratios automáticos (mín 0.87x y 0 traslapes) para proyecto '{req.project}'...")
-    
+
+    print(f"[AUTO-RATIOS] Calculando ratios automáticos (mín 0.87x y 0 traslapes con margen 100ms) para proyecto '{req.project}'...")
+
     # 1. Asegurar orden cronológico por start_ms
     metadata.sort(key=lambda s: s.get("start_ms", 0))
 
@@ -1423,22 +1427,26 @@ def auto_calculate_ratios(req: AutoRatiosRequest):
         except Exception:
             total_audio_ms = 0
 
-    SAFETY_BUFFER_MS = 25  # Margen de 25ms para que el audio termine limpiamente antes del siguiente
+    SAFETY_MARGIN_MS = 100  # Margen de 100ms para absorber cuantización de FFmpeg y redondeos
 
     for i, seg in enumerate(metadata):
         cur_start = seg.get("start_ms", 0)
-        
-        # Calcular espacio disponible hasta el siguiente segmento
+        seg_end = seg.get("end_ms", cur_start + 1000)
+
+        # 2. Determinar la frontera máxima permitida antes del siguiente segmento
         if i < len(metadata) - 1:
             next_start = metadata[i + 1].get("start_ms", cur_start + 1000)
             if next_start <= cur_start:
                 next_start = cur_start + 100
                 metadata[i + 1]["start_ms"] = next_start
-            available_span = max(100, (next_start - cur_start) - SAFETY_BUFFER_MS)
+            max_boundary = min(seg_end, next_start)
         else:
-            available_span = max(1000, total_audio_ms - cur_start) if total_audio_ms > cur_start else 10000
+            max_boundary = seg_end if seg_end > cur_start else (cur_start + 10000)
 
-        # Obtener duración del máster raw
+        # Espacio efectivo descontando el margen de seguridad de 100 ms
+        effective_span = max(100, (max_boundary - cur_start) - SAFETY_MARGIN_MS)
+
+        # 3. Duración del máster raw
         fname = seg.get("filename", "")
         raw_p = os.path.join(audios_dir, "raw", fname) if fname and audios_dir else ""
         if not os.path.exists(raw_p) and fname and audios_dir:
@@ -1453,24 +1461,39 @@ def auto_calculate_ratios(req: AutoRatiosRequest):
             except Exception:
                 raw_dur = seg.get("clip_duration_ms", 0)
         if raw_dur <= 0:
-            raw_dur = max(100, seg.get("end_ms", 0) - cur_start)
+            raw_dur = max(100, seg_end - cur_start)
 
-        # Directriz 2: Cero traslapes (acelerar si raw_dur > available_span)
-        needed_ratio = raw_dur / float(available_span)
+        # 4. Cálculo del ratio con redondeo por exceso (math.ceil)
+        needed_ratio = raw_dur / float(effective_span)
+
         if needed_ratio > 1.0:
             final_ratio = math.ceil(needed_ratio * 100) / 100.0
         else:
-            # Directriz 1: Nunca tener ratio menor a 0.87x
-            target_span = seg.get("end_ms", 0) - cur_start
-            slot_ratio = (raw_dur / float(target_span)) if target_span > 0 else 1.0
-            final_ratio = max(0.87, min(1.0, round(slot_ratio, 2)))
+            # Desaceleración: acotada entre 0.87x y 1.0x usando ceil para no pasarse
+            ceil_ratio = math.ceil(needed_ratio * 100) / 100.0
+            final_ratio = max(0.87, min(1.0, ceil_ratio))
 
-        process_segment_from_raw(
+        # 5. Procesar con FFmpeg
+        updated_seg = process_segment_from_raw(
             paths=paths,
             segment=seg,
             requested_ratio=final_ratio,
             is_manual=True
         )
+
+        # 6. Guarda de seguridad pos-render (doble verificación acústica)
+        active_len = updated_seg.get("clip_duration_ms", 0)
+        if i < len(metadata) - 1:
+            next_start = metadata[i + 1].get("start_ms", cur_start + 1000)
+            if (cur_start + active_len) > (next_start - 15):
+                nudge_ratio = round(final_ratio + 0.01, 2)
+                print(f"[AUTO-RATIOS] Micro-ajuste preventivo por cuantización en {fname}: {final_ratio}x -> {nudge_ratio}x")
+                process_segment_from_raw(
+                    paths=paths,
+                    segment=seg,
+                    requested_ratio=nudge_ratio,
+                    is_manual=True
+                )
 
     pm.save_project_metadata(req.project, metadata)
 
