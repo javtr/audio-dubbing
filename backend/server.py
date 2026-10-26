@@ -1490,14 +1490,19 @@ class ResetAudiosRequest(BaseModel):
 
 @app.post("/api/timeline/reset-raw-audios")
 def reset_raw_audios(req: ResetAudiosRequest):
-    """Restaura uno o todos los segmentos a sus audios máster vírgenes originales de la IA (1.0x)."""
+    """
+    Restaura los segmentos a sus audios vírgenes (1.0x) preservando fielmente
+    el inicio y fin asignados por el máster original, manteniendo los silencios.
+    """
     import shutil
+    import copy
+    from pydub import AudioSegment
+
     paths = pm.get_project_paths(req.project)
-    metadata = pm.load_project_metadata(req.project)
-    audio_path = paths.get("audio_file")
     audios_dir = paths.get("audios_dir", "")
     raw_dir = os.path.join(audios_dir, "raw")
-    
+    audio_path = paths.get("audio_file")
+
     os.makedirs(raw_dir, exist_ok=True)
     if os.path.exists(audios_dir):
         for f in os.listdir(audios_dir):
@@ -1507,30 +1512,110 @@ def reset_raw_audios(req: ResetAudiosRequest):
                 if not os.path.exists(dst):
                     shutil.copy2(src, dst)
 
-    from pydub import AudioSegment
-    restored_count = 0
-    target_name = f"segmento '{req.segment_id}'" if req.segment_id else "TODOS los segmentos"
-    print(f"[RESET-RAW] Solicitud de restauración para proyecto '{req.project}' ({target_name})...")
-
+    current_metadata = pm.load_project_metadata(req.project) or []
     master_metadata = pm.load_master_metadata(req.project) or []
-    master_map = {str(m.get("id")): m for m in master_metadata}
+    
+    master_by_id = {str(m.get("id")): m for m in master_metadata}
+    master_by_file = {m.get("filename"): m for m in master_metadata if m.get("filename")}
 
-    for seg in metadata:
-        sid = str(seg.get("id"))
-        if req.segment_id and sid != str(req.segment_id):
-            continue
+    restored_count = 0
 
-        fname = seg.get("filename", "")
-        if not fname:
-            continue
+    if not req.segment_id:
+        # ==================== CASO A: RESET TOTAL (Todos los segmentos) ====================
+        if master_metadata:
+            # Preservar traducciones y tonos editados por el usuario
+            current_text_map = {str(s.get("id")): s for s in current_metadata}
+            new_metadata = []
 
-        raw_path = os.path.join(raw_dir, fname)
-        active_path = os.path.join(audios_dir, fname)
+            for m_seg in master_metadata:
+                seg = copy.deepcopy(m_seg)
+                sid = str(seg.get("id"))
+                
+                if sid in current_text_map:
+                    c_seg = current_text_map[sid]
+                    if c_seg.get("translated"):
+                        seg["translated"] = c_seg["translated"]
+                    if c_seg.get("tone"):
+                        seg["tone"] = c_seg["tone"]
 
-        if os.path.exists(raw_path):
-            shutil.copy(raw_path, active_path)
-            os.utime(active_path, None)
-            raw_len = len(AudioSegment.from_file(raw_path))
+                fname = seg.get("filename", "")
+                raw_path = os.path.join(raw_dir, fname)
+                active_path = os.path.join(audios_dir, fname)
+
+                if os.path.exists(raw_path):
+                    shutil.copy(raw_path, active_path)
+                    os.utime(active_path, None)
+                    raw_len = len(AudioSegment.from_file(raw_path))
+                elif os.path.exists(active_path):
+                    raw_len = len(AudioSegment.from_file(active_path))
+                else:
+                    raw_len = seg.get("clip_duration_ms", 0)
+
+                seg["raw_duration_ms"] = raw_len
+                seg["clip_duration_ms"] = raw_len
+                seg["speed_ratio"] = 1.0
+                seg["current_speed_ratio"] = 1.0
+                seg["is_manual_ratio"] = False
+
+                # PRESERVACIÓN EXACTA DE TIEMPOS:
+                # start_ms = máster original
+                # end_ms = máster original (o expansión si raw_len excede la ranura)
+                m_start = seg.get("start_ms", 0)
+                m_end = seg.get("end_ms", m_start + raw_len)
+                seg["start_ms"] = m_start
+                seg["end_ms"] = max(m_end, m_start + raw_len)
+                seg["orig_start_ms"] = m_start
+                seg["orig_end_ms"] = m_end
+
+                new_metadata.append(seg)
+                restored_count += 1
+
+            metadata_to_save = new_metadata
+        else:
+            for seg in current_metadata:
+                fname = seg.get("filename", "")
+                raw_path = os.path.join(raw_dir, fname)
+                active_path = os.path.join(audios_dir, fname)
+                if os.path.exists(raw_path):
+                    shutil.copy(raw_path, active_path)
+                    os.utime(active_path, None)
+                    raw_len = len(AudioSegment.from_file(raw_path))
+                elif os.path.exists(active_path):
+                    raw_len = len(AudioSegment.from_file(active_path))
+                else:
+                    raw_len = seg.get("clip_duration_ms", 0)
+
+                seg["raw_duration_ms"] = raw_len
+                seg["clip_duration_ms"] = raw_len
+                seg["speed_ratio"] = 1.0
+                seg["current_speed_ratio"] = 1.0
+                seg["is_manual_ratio"] = False
+                
+                target_start = seg.get("orig_start_ms", seg.get("start_ms", 0))
+                target_end = seg.get("orig_end_ms", seg.get("end_ms", target_start + raw_len))
+                seg["start_ms"] = target_start
+                seg["end_ms"] = max(target_end, target_start + raw_len)
+                restored_count += 1
+            metadata_to_save = current_metadata
+    else:
+        # ==================== CASO B: RESET INDIVIDUAL (1 Segmento) ====================
+        target_sid = str(req.segment_id)
+        for seg in current_metadata:
+            if str(seg.get("id")) != target_sid:
+                continue
+
+            fname = seg.get("filename", "")
+            raw_path = os.path.join(raw_dir, fname)
+            active_path = os.path.join(audios_dir, fname)
+
+            if os.path.exists(raw_path):
+                shutil.copy(raw_path, active_path)
+                os.utime(active_path, None)
+                raw_len = len(AudioSegment.from_file(raw_path))
+            elif os.path.exists(active_path):
+                raw_len = len(AudioSegment.from_file(active_path))
+            else:
+                raw_len = seg.get("clip_duration_ms", 0)
 
             seg["raw_duration_ms"] = raw_len
             seg["clip_duration_ms"] = raw_len
@@ -1538,23 +1623,29 @@ def reset_raw_audios(req: ResetAudiosRequest):
             seg["current_speed_ratio"] = 1.0
             seg["is_manual_ratio"] = False
 
-            # PRESERVAR SILENCIO: Recuperar el fin maestro original del segmento sin amputarlo
-            master_seg = master_map.get(sid)
-            target_end = (master_seg.get("end_ms") if master_seg else None) or seg.get("orig_end_ms") or seg.get("end_ms", 0)
-            seg["end_ms"] = max(target_end, seg.get("start_ms", 0) + raw_len)
-            restored_count += 1
-            print(f"[RESET-RAW] Restaurado a máster virgen 1.0x: {fname} ({raw_len} ms, slot={seg['end_ms'] - seg.get('start_ms', 0)} ms)")
+            m_seg = master_by_id.get(target_sid) or master_by_file.get(fname)
+            if m_seg:
+                target_start = m_seg.get("start_ms", seg.get("start_ms", 0))
+                target_end = m_seg.get("end_ms", target_start + raw_len)
+            else:
+                target_start = seg.get("orig_start_ms", seg.get("start_ms", 0))
+                target_end = seg.get("orig_end_ms", seg.get("end_ms", target_start + raw_len))
 
-    pm.save_project_metadata(req.project, metadata)
+            seg["start_ms"] = target_start
+            seg["end_ms"] = max(target_end, target_start + raw_len)
+            restored_count += 1
+
+        metadata_to_save = current_metadata
+
+    pm.save_project_metadata(req.project, metadata_to_save)
     invalidate_waveform_cache(req.project, "dub")
 
-    # Reconstruir la mezcla versionada
-    processor = AudioProcessor(audio_path, audios_dir, metadata)
+    processor = AudioProcessor(audio_path, audios_dir, metadata_to_save)
     export_dubbed_mix_versioned(processor, paths, req.project)
 
-    val = TimingValidator.validate(metadata)
+    val = TimingValidator.validate(metadata_to_save)
     print(f"[RESET-RAW] Éxito: Se restauraron {restored_count} audios al máster original de IA.")
-    return {"status": "ok", "restored_count": restored_count, "metadata": metadata, "validation": val}
+    return {"status": "ok", "restored_count": restored_count, "metadata": metadata_to_save, "validation": val}
 
 
 class DeleteSegmentRequest(BaseModel):
