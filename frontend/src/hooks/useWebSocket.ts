@@ -25,7 +25,14 @@ export function useWebSocket() {
               break;
 
             case 'transcribe_complete':
+              if (data.text) store.setTranscript(data.text);
               store.setLiveStatus('¡Transcripción completada con éxito!');
+              break;
+
+            case 'transcribe_and_segment_complete':
+              store.setSegments(data.segments);
+              if (data.transcript) store.setTranscript(data.transcript);
+              store.setLiveStatus(`¡Audio transcrito y dividido en ${data.segments.length} secciones acústicas con éxito!`);
               break;
 
             case 'align_complete':

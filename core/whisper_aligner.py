@@ -72,6 +72,150 @@ class WhisperAligner:
         finally:
             self.unload_model()
 
+    def transcribe_and_segment_acoustic(self, audio_path, min_silence_s=1.5, callback_status=None):
+        """
+        Transcribe el audio y lo subdivide directamente en segmentos acústicos
+        basándose en los silencios reales entre palabras detectados por Whisper.
+        """
+        if callback_status:
+            callback_status("Iniciando análisis acústico y detección de silencios con Whisper...")
+        
+        try:
+            model = self._get_model()
+            segments, info = model.transcribe(audio_path, language="es", beam_size=5, word_timestamps=True)
+            audio_duration_ms = int(info.duration * 1000)
+            
+            all_words = []
+            for seg in segments:
+                if not hasattr(seg, "words") or not seg.words:
+                    continue
+                for w in seg.words:
+                    w_str = w.word.strip()
+                    if w_str:
+                        all_words.append({
+                            "word": w_str,
+                            "start_ms": int(w.start * 1000),
+                            "end_ms": int(w.end * 1000)
+                        })
+                        
+            if not all_words:
+                return [], "", audio_duration_ms
+
+            min_silence_ms = int(float(min_silence_s) * 1000)
+            result_segments = []
+            current_words = []
+            seg_counter = 1
+            formatted_lines = []
+
+            for i in range(len(all_words)):
+                cur_w = all_words[i]
+                current_words.append(cur_w)
+                
+                is_last_word = (i == len(all_words) - 1)
+                should_split = False
+                
+                if is_last_word:
+                    should_split = True
+                else:
+                    next_w = all_words[i + 1]
+                    gap_ms = next_w["start_ms"] - cur_w["end_ms"]
+                    
+                    # 1. Silencio acústico real >= min_silence_ms (ej. 1500ms)
+                    if gap_ms >= min_silence_ms:
+                        should_split = True
+                    # 2. Fin de oración (. ? !) + pausa moderada >= 500ms
+                    elif cur_w["word"].endswith(('.', '?', '!', '...')) and gap_ms >= 500:
+                        should_split = True
+                    # 3. Límite de seguridad para evitar frases excesivamente largas
+                    elif len(current_words) >= 45 or (cur_w["end_ms"] - current_words[0]["start_ms"]) >= 18000:
+                        if cur_w["word"].endswith((',', ';', ':', '.')) or gap_ms >= 250:
+                            should_split = True
+
+                if should_split and current_words:
+                    start_ms = current_words[0]["start_ms"]
+                    # Pequeño respiro acústico de 150ms al final para no cortar consonantes
+                    end_ms = current_words[-1]["end_ms"] + 150
+                    if not is_last_word:
+                        end_ms = min(end_ms, all_words[i + 1]["start_ms"])
+                        
+                    sentence_text = " ".join(w["word"] for w in current_words).strip()
+                    
+                    seg_id = seg_counter
+                    seg_dict = {
+                        "id": seg_id,
+                        "original": sentence_text,
+                        "translated": "",
+                        "start_ms": start_ms,
+                        "end_ms": end_ms,
+                        "orig_start_ms": start_ms,
+                        "orig_end_ms": end_ms,
+                        "filename": f"segment_{seg_id - 1:03d}.wav",
+                        "speed_ratio": 1.0,
+                        "current_speed_ratio": 1.0,
+                        "tone": "Conversational"
+                    }
+                    result_segments.append(seg_dict)
+                    
+                    # Formato legible: [00:03 - 00:08] #1: Texto...
+                    s_sec = start_ms / 1000.0
+                    e_sec = end_ms / 1000.0
+                    time_header = f"[{int(s_sec // 60):02d}:{int(s_sec % 60):02d}.{int((s_sec % 1) * 10):d} - {int(e_sec // 60):02d}:{int(e_sec % 60):02d}.{int((e_sec % 1) * 10):d}]"
+                    formatted_lines.append(f"{time_header} #{seg_id}: {sentence_text}")
+                    
+                    seg_counter += 1
+                    current_words = []
+
+            formatted_transcript = "\n".join(formatted_lines)
+            return result_segments, formatted_transcript, audio_duration_ms
+        finally:
+            self.unload_model()
+
+    def generate_translation_prompt(self, segments_data, target_lang="en"):
+        """
+        Genera el prompt listo para Gemini Web con las frases ya delimitadas acústicamente por Whisper.
+        Gemini solo debe traducirlas sin inventar cortes ni alterar el orden.
+        """
+        is_pt = str(target_lang).lower() in ("pt", "portuguese")
+        lang_name = "PORTUGUÉS DE BRASIL (pt-BR)" if is_pt else "INGLÉS (English)"
+
+        input_list = []
+        for s in segments_data:
+            orig = s.get("original", "").strip()
+            input_list.append({
+                "id": s.get("id"),
+                "original": orig,
+            })
+
+        input_json_str = json.dumps(input_list, indent=2, ensure_ascii=False)
+
+        prompt = f"""Actúa como un director de doblaje y traductor audiovisual profesional de ESPAÑOL a {lang_name}.
+
+A continuación tienes una lista de frases numeradas que fueron extraídas de un audio real con tiempos acústicos ya fijados.
+Traduce cada frase al {lang_name} con un tono natural, fluido y conversacional, manteniendo una longitud y ritmo adecuados para ser doblados por voz artificial (TTS).
+
+🎯 INSTRUCCIONES ESTRICTAS:
+1. Traduce exactamente las frases proporcionadas, una a una.
+2. NO unas frases ni las dividas en más partes.
+3. Conserva exactamente el mismo "id" para cada frase.
+4. NO inventes texto adicional ni añadas muletillas que no estén en el español.
+5. Devuelve ÚNICAMENTE un bloque de código JSON válido con la estructura solicitada.
+
+DATOS A TRADUCIR:
+```json
+{input_json_str}
+```
+
+ESTRUCTURA DE RESPUESTA REQUERIDA (JSON):
+```json
+[
+  {{
+    "id": 1,
+    "translated": "Traducción al {lang_name} aquí..."
+  }}
+]
+```"""
+        return prompt
+
     def generate_gemini_prompt(self, spanish_text, target_lang="en"):
         """Genera el prompt listo para copiar y pegar en Gemini Web según el idioma destino ('en' o 'pt')."""
         if str(target_lang).lower() in ("pt", "portuguese"):

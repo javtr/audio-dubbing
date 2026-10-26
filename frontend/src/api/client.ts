@@ -52,6 +52,27 @@ export const alignScript = async (project: string, geminiData: Segment[], splitO
   return res.data;
 };
 
+export const transcribeAndSegment = async (project: string, minSilenceS = 1.5) => {
+  const res = await api.post('/script/transcribe-and-segment', {
+    project,
+    min_silence_s: minSilenceS,
+  });
+  return res.data;
+};
+
+export const generateTranslationPrompt = async (project: string) => {
+  const res = await api.post('/script/generate-translation-prompt', { project });
+  return res.data;
+};
+
+export const applyTranslation = async (project: string, translations: any[]) => {
+  const res = await api.post('/script/apply-translation', {
+    project,
+    translations,
+  });
+  return res.data;
+};
+
 export const checkTTSStatus = async (): Promise<{ connected: boolean; url: string }> => {
   try {
     const res = await api.get('/tts/status');

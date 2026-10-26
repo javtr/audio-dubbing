@@ -10,6 +10,7 @@ interface ProjectState {
   audioDurationMs: number;
   segments: Segment[];
   validation: ValidationResult | null;
+  transcript: string;
 
   activeTab: 'script' | 'dubbing' | 'studio';
   selectedSegmentId: string | null;
@@ -26,6 +27,7 @@ interface ProjectState {
   setActiveTab: (tab: 'script' | 'dubbing' | 'studio') => void;
   setSelectedSegmentId: (id: string | null) => void;
   setLiveStatus: (msg: string) => void;
+  setTranscript: (t: string) => void;
   loadProjectsList: () => Promise<void>;
   selectProject: (name: string) => Promise<void>;
   setSegments: (segments: Segment[]) => void;
@@ -44,6 +46,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   audioDurationMs: 0,
   segments: [],
   validation: null,
+  transcript: '',
 
   activeTab: 'script',
   selectedSegmentId: null,
@@ -59,6 +62,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   setActiveTab: (tab) => set({ activeTab: tab }),
   setSelectedSegmentId: (id) => set({ selectedSegmentId: id }),
   setLiveStatus: (msg) => set({ liveStatusMessage: msg }),
+  setTranscript: (t) => set({ transcript: t }),
 
   loadProjectsList: async () => {
     try {
@@ -83,6 +87,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         audioDurationMs: detail.audio_duration_ms,
         segments: detail.metadata,
         validation: detail.validation,
+        transcript: detail.transcript || '',
         selectedSegmentId: detail.metadata.length > 0 ? String(detail.metadata[0].id) : null,
       });
 

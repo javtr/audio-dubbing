@@ -377,13 +377,31 @@ def get_project(name: str):
             seg["speed_ratio"] = 1.0
             seg["current_speed_ratio"] = 1.0
 
+    trans_text = ""
+    trans_path = os.path.join(paths["root"], "transcription.txt")
+    if os.path.exists(trans_path):
+        try:
+            with open(trans_path, "r", encoding="utf-8") as f:
+                trans_text = f.read()
+        except Exception:
+            pass
+    if not trans_text and metadata:
+        def _fmt_ts(ms):
+            s = int(ms // 1000)
+            return f"{s//60:02d}:{s%60:02d}"
+        trans_text = "\n\n".join(
+            f"[{_fmt_ts(s.get('start_ms', 0))} - {_fmt_ts(s.get('end_ms', 0))}] #{s.get('id', i+1)}: {s.get('original', '')}"
+            for i, s in enumerate(metadata)
+        )
+
     return {
         "name": name,
         "language": lang,
         "paths": paths,
         "audio_duration_ms": audio_duration_ms,
         "metadata": metadata,
-        "validation": validation
+        "validation": validation,
+        "transcript": trans_text
     }
 
 
@@ -434,6 +452,55 @@ def transcribe_audio(req: TranscribeRequest, background_tasks: BackgroundTasks):
             ws_manager.broadcast_sync({
                 "type": "transcribe_complete",
                 "text": text
+            })
+        except Exception as e:
+            ws_manager.broadcast_sync({
+                "type": "transcribe_error",
+                "error": str(e)
+            })
+        finally:
+            aligner.unload_model()
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return {"status": "started"}
+
+class TranscribeAndSegmentRequest(BaseModel):
+    project: str
+    min_silence_s: float = 1.5
+
+@app.post("/api/script/transcribe-and-segment")
+def transcribe_and_segment_endpoint(req: TranscribeAndSegmentRequest):
+    paths = pm.get_project_paths(req.project)
+    audio_file = paths.get("audio_file")
+    if not audio_file or not os.path.exists(audio_file):
+        raise HTTPException(status_code=400, detail="Audio original no encontrado en el proyecto.")
+
+    def _worker():
+        try:
+            ws_manager.broadcast_sync({"type": "transcribe_status", "status": f"Analizando silencios (>= {req.min_silence_s}s) y transcribiendo con Whisper..."})
+            segments, full_transcript, duration_ms = aligner.transcribe_and_segment_acoustic(
+                audio_file,
+                min_silence_s=req.min_silence_s,
+                callback_status=lambda msg: ws_manager.broadcast_sync({
+                    "type": "transcribe_status",
+                    "status": msg
+                })
+            )
+            pm.save_project_metadata(req.project, segments)
+            pm.save_master_metadata(req.project, segments)
+            trans_path = os.path.join(paths["root"], "transcription.txt")
+            try:
+                with open(trans_path, "w", encoding="utf-8") as f:
+                    f.write(full_transcript)
+            except Exception:
+                pass
+            val = TimingValidator.validate(segments, duration_ms)
+            ws_manager.broadcast_sync({
+                "type": "transcribe_and_segment_complete",
+                "segments": segments,
+                "transcript": full_transcript,
+                "duration_ms": duration_ms,
+                "validation": val
             })
         except Exception as e:
             ws_manager.broadcast_sync({
@@ -503,6 +570,58 @@ def align_script(req: AlignRequest):
 
     threading.Thread(target=_worker, daemon=True).start()
     return {"status": "started"}
+
+
+class TranslationPromptRequest(BaseModel):
+    project: str
+
+@app.post("/api/script/generate-translation-prompt")
+def generate_translation_prompt_endpoint(req: TranslationPromptRequest):
+    metadata = pm.load_project_metadata(req.project)
+    if not metadata:
+        raise HTTPException(status_code=400, detail="Primero debes transcribir y segmentar el audio con Whisper.")
+    lang = pm.get_project_language(req.project)
+    prompt = aligner.generate_translation_prompt(metadata, target_lang=lang)
+    return {"prompt": prompt, "language": lang, "segments_count": len(metadata)}
+
+
+class ApplyTranslationRequest(BaseModel):
+    project: str
+    translations: List[Dict[str, Any]]
+
+@app.post("/api/script/apply-translation")
+def apply_translation_endpoint(req: ApplyTranslationRequest):
+    metadata = pm.load_project_metadata(req.project)
+    new_data = req.translations
+
+    new_map = {str(item.get("id")): item for item in new_data if "id" in item}
+
+    updated_count = 0
+    for idx, seg in enumerate(metadata):
+        sid = str(seg.get("id"))
+        if sid in new_map:
+            match = new_map[sid]
+            if "translated" in match:
+                seg["translated"] = match["translated"].strip()
+            if "tone" in match:
+                seg["tone"] = match["tone"].strip()
+            updated_count += 1
+        elif idx < len(new_data):
+            match = new_data[idx]
+            if "translated" in match:
+                seg["translated"] = match["translated"].strip()
+            if "tone" in match:
+                seg["tone"] = match["tone"].strip()
+            updated_count += 1
+
+    pm.save_project_metadata(req.project, metadata)
+    val = TimingValidator.validate(metadata)
+    return {
+        "status": "ok",
+        "updated_count": updated_count,
+        "metadata": metadata,
+        "validation": val
+    }
 
 
 class RetranslationPromptRequest(BaseModel):

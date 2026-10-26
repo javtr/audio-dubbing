@@ -54,6 +54,7 @@ export interface ProjectDetail {
   audio_duration_ms: number;
   metadata: Segment[];
   validation: ValidationResult;
+  transcript?: string;
 }
 
 export interface ReferenceItem {
