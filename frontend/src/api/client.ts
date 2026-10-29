@@ -73,13 +73,38 @@ export const applyTranslation = async (project: string, translations: any[]) => 
   return res.data;
 };
 
-export const checkTTSStatus = async (): Promise<{ connected: boolean; url: string }> => {
+export interface TTSStatusResponse {
+  connected: boolean;
+  server_online?: boolean;
+  model_loaded?: boolean;
+  model_name?: string;
+  free_vram_gb?: number;
+  total_vram_gb?: number;
+  url: string;
+}
+
+export const checkTTSStatus = async (): Promise<TTSStatusResponse> => {
   try {
     const res = await api.get('/tts/status');
     return res.data;
   } catch {
-    return { connected: false, url: '' };
+    return { connected: false, model_loaded: false, url: '' };
   }
+};
+
+export const toggleTTSModel = async (): Promise<{ action: string; status: TTSStatusResponse; detail?: any }> => {
+  const res = await api.post('/tts/toggle');
+  return res.data;
+};
+
+export const loadTTSModel = async (model_name?: string) => {
+  const res = await api.post('/tts/load', { model_name });
+  return res.data;
+};
+
+export const unloadTTSModel = async () => {
+  const res = await api.post('/tts/unload');
+  return res.data;
 };
 
 export const getTTSReferences = async (language = 'en'): Promise<ReferenceItem[]> => {

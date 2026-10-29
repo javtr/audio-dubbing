@@ -11,6 +11,8 @@ export const Navbar: React.FC = () => {
     language,
     activeTab,
     isTTSConnected,
+    isTTSLoaded,
+    isTTSToggling,
     ttsUrl,
     isNewProjectModalOpen,
     setActiveTab,
@@ -19,6 +21,7 @@ export const Navbar: React.FC = () => {
     setIsNewProjectModalOpen,
     loadProjectsList,
     checkTTS,
+    toggleTTSModel,
   } = useProjectStore();
   const [newProjectName, setNewProjectName] = useState('');
   const [newMediaPath, setNewMediaPath] = useState('');
@@ -146,16 +149,31 @@ export const Navbar: React.FC = () => {
           )}
 
           <button
-            onClick={checkTTS}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition ${
-              isTTSConnected
-                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-                : 'bg-rose-500/10 border-rose-500/30 text-rose-400 hover:bg-rose-500/20'
+            onClick={toggleTTSModel}
+            disabled={isTTSToggling}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition shadow-sm ${
+              isTTSToggling
+                ? 'bg-amber-500/15 border-amber-500/50 text-amber-300 animate-pulse cursor-wait'
+                : isTTSLoaded
+                ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300 hover:bg-emerald-500/30 shadow-emerald-950/40'
+                : 'bg-neutral-800/90 border-neutral-700 text-neutral-300 hover:bg-neutral-700 hover:text-white'
             }`}
-            title={isTTSConnected ? `Motor TTS activo: ${ttsUrl}` : 'Motor TTS no detectado en entorno local. Haz clic para reintentar.'}
+            title={
+              isTTSToggling
+                ? 'Procesando en GPU...'
+                : isTTSLoaded
+                ? 'Modelo Qwen3-TTS montado en GPU (VRAM activa). Haz clic para desmontarlo y liberar memoria.'
+                : 'Modelo Qwen3-TTS no montado. Haz clic para montarlo en VRAM y dejarlo listo para doblar instantáneamente.'
+            }
           >
-            <Radio className="w-3.5 h-3.5" />
-            <span>{isTTSConnected ? 'Qwen3 TTS OK' : 'TTS Off'}</span>
+            <Radio className={`w-3.5 h-3.5 ${isTTSToggling ? 'animate-spin' : isTTSLoaded ? 'text-emerald-400' : 'text-neutral-400'}`} />
+            <span>
+              {isTTSToggling
+                ? (isTTSLoaded ? 'Desmontando...' : 'Montando en VRAM...')
+                : isTTSLoaded
+                ? '🟢 Qwen TTS Listo'
+                : '⚡ Montar Qwen TTS'}
+            </span>
           </button>
         </div>
       </div>

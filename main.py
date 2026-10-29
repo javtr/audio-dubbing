@@ -227,14 +227,22 @@ class AudioDubbingStudio(ctk.CTk):
 
     def _check_pinokio_status_async(self):
         def _check():
-            online = self.pinokio.check_connection()
+            if hasattr(self.pinokio, "get_status"):
+                status = self.pinokio.get_status()
+                online = status.get("connected", False)
+                loaded = status.get("model_loaded", False)
+            else:
+                online = self.pinokio.check_connection()
+                loaded = False
             self.pinokio_connected = online
-            self.run_on_ui_thread(lambda: self.top_bar.set_pinokio_status(online))
+            self.run_on_ui_thread(lambda: self.top_bar.set_pinokio_status(online, loaded))
         threading.Thread(target=_check, daemon=True).start()
 
     def _free_vram_action(self):
         try:
             self.aligner.unload_model()
+            if hasattr(self, "pinokio") and hasattr(self.pinokio, "unload_model"):
+                self.pinokio.unload_model()
             gc.collect()
             try:
                 import torch
@@ -243,9 +251,10 @@ class AudioDubbingStudio(ctk.CTk):
                     torch.cuda.ipc_collect()
             except Exception:
                 pass
+            self._check_pinokio_status_async()
             messagebox.showinfo(
                 "VRAM Liberada",
-                "El modelo de Whisper ha sido descargado y la VRAM de la GPU ha sido liberada para Pinokio."
+                "Los modelos de Whisper y Qwen3-TTS han sido descargados y la VRAM de la GPU ha sido liberada completamente."
             )
         except Exception as e:
             messagebox.showerror("Error", f"No se pudo liberar la memoria: {e}")

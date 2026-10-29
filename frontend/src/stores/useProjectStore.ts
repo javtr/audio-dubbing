@@ -16,6 +16,8 @@ interface ProjectState {
   selectedSegmentId: string | null;
 
   isTTSConnected: boolean;
+  isTTSLoaded: boolean;
+  isTTSToggling: boolean;
   ttsUrl: string;
   references: ReferenceItem[];
 
@@ -39,6 +41,7 @@ interface ProjectState {
   revertToMaster: () => Promise<void>;
   reloadProject: () => Promise<void>;
   checkTTS: () => Promise<void>;
+  toggleTTSModel: () => Promise<void>;
 }
 
 export const useProjectStore = create<ProjectState>((set, get) => ({
@@ -55,6 +58,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   selectedSegmentId: null,
 
   isTTSConnected: false,
+  isTTSLoaded: false,
+  isTTSToggling: false,
   ttsUrl: '',
   references: [],
 
@@ -166,7 +171,28 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   checkTTS: async () => {
     const status = await api.checkTTSStatus();
-    set({ isTTSConnected: status.connected, ttsUrl: status.url });
+    set({
+      isTTSConnected: status.connected,
+      isTTSLoaded: Boolean(status.model_loaded),
+      ttsUrl: status.url,
+    });
+  },
+
+  toggleTTSModel: async () => {
+    set({ isTTSToggling: true });
+    try {
+      const res = await api.toggleTTSModel();
+      set({
+        isTTSConnected: res.status.connected,
+        isTTSLoaded: Boolean(res.status.model_loaded),
+        ttsUrl: res.status.url,
+      });
+    } catch (e: any) {
+      console.error('Error toggling TTS model', e);
+      alert(`Error al montar/desmontar Qwen3-TTS: ${e?.response?.data?.detail || e.message}`);
+    } finally {
+      set({ isTTSToggling: false });
+    }
   },
 }));
 

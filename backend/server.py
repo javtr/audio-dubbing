@@ -686,8 +686,39 @@ def apply_retranslation(req: ApplyRetranslationRequest):
 
 @app.get("/api/tts/status")
 def check_tts_connection():
-    is_connected = tts_client.check_connection()
-    return {"connected": is_connected, "url": tts_client.base_url}
+    return tts_client.get_status()
+
+
+class LoadTTSModelRequest(BaseModel):
+    model_name: Optional[str] = None
+
+
+@app.post("/api/tts/load")
+def load_tts_model(req: Optional[LoadTTSModelRequest] = None):
+    # 1. Asegurar descarga total de Whisper de la VRAM para evitar CUDA OOM
+    aligner.unload_model()
+    # 2. Cargar modelo Qwen3-TTS en VRAM
+    model_name = req.model_name if req else None
+    res = tts_client.load_model(model_name)
+    return {"status": "ok", "detail": res}
+
+
+@app.post("/api/tts/unload")
+def unload_tts_model():
+    res = tts_client.unload_model()
+    return {"status": "ok", "detail": res}
+
+
+@app.post("/api/tts/toggle")
+def toggle_tts_model():
+    status = tts_client.get_status()
+    if status.get("model_loaded"):
+        res = tts_client.unload_model()
+        return {"action": "unloaded", "status": tts_client.get_status(), "detail": res}
+    else:
+        aligner.unload_model()
+        res = tts_client.load_model()
+        return {"action": "loaded", "status": tts_client.get_status(), "detail": res}
 
 
 @app.get("/api/tts/references")

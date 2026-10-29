@@ -88,9 +88,11 @@ class TopBar(ctk.CTkFrame):
         target = select_project if select_project in vals else vals[0]
         self.opt_project.set(target)
 
-    def set_pinokio_status(self, online):
-        if online:
-            self.lbl_pinokio.configure(text="● Qwen3-TTS Directo OK", text_color="#28a745")
+    def set_pinokio_status(self, online, model_loaded=False):
+        if model_loaded:
+            self.lbl_pinokio.configure(text="● Qwen3-TTS Listo (En VRAM)", text_color="#28a745")
+        elif online:
+            self.lbl_pinokio.configure(text="● Qwen3-TTS Desmontado", text_color="#ffb74d")
         else:
             self.lbl_pinokio.configure(text="● Qwen3-TTS No Encontrado", text_color="#e57373")
 
