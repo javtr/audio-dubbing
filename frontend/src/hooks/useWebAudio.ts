@@ -12,6 +12,11 @@ export function useWebAudio(originalUrl?: string, dubbedMixUrl?: string) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTimeMs, setCurrentTimeMs] = useState(0);
 
+  const isPlayingRef = useRef(isPlaying);
+  isPlayingRef.current = isPlaying;
+  const currentTimeMsRef = useRef(currentTimeMs);
+  currentTimeMsRef.current = currentTimeMs;
+
   const [volOrig, setVolOrig] = useState(1.0);
   const [volDub, setVolDub] = useState(1.0);
   const [isMuteOrig, setIsMuteOrig] = useState(false);
@@ -82,16 +87,45 @@ export function useWebAudio(originalUrl?: string, dubbedMixUrl?: string) {
   }, [originalUrl]);
 
   useEffect(() => {
-    if (dubAudioRef.current && dubbedMixUrl) {
-      const wasPlaying = isPlaying;
-      const curSec = currentTimeMs / 1000;
+    if (!dubAudioRef.current || !dubbedMixUrl) return;
+
+    // Si aún no hay audio asignado en la pista doblada, cargar directamente
+    if (!dubAudioRef.current.src) {
       dubAudioRef.current.src = dubbedMixUrl;
       dubAudioRef.current.load();
-      if (wasPlaying) {
-        dubAudioRef.current.currentTime = curSec;
+      return;
+    }
+
+    // Si ya existe audio en reproducción o cargado, precargamos en segundo plano
+    // para evitar silenciar la pista o provocar micro-cortes mientras el navegador bufferiza
+    let isCancelled = false;
+    const preloadAudio = new Audio();
+    preloadAudio.preload = 'auto';
+    preloadAudio.crossOrigin = 'anonymous';
+
+    const handleCanPlay = () => {
+      if (isCancelled || !dubAudioRef.current) return;
+
+      const masterEl = origAudioRef.current;
+      const curSec = masterEl && !masterEl.paused ? masterEl.currentTime : (dubAudioRef.current.currentTime || (currentTimeMsRef.current / 1000));
+      const shouldPlay = isPlayingRef.current || (masterEl && !masterEl.paused) || !dubAudioRef.current.paused;
+
+      dubAudioRef.current.src = dubbedMixUrl;
+      dubAudioRef.current.currentTime = curSec;
+      if (shouldPlay) {
         dubAudioRef.current.play().catch(() => {});
       }
-    }
+    };
+
+    preloadAudio.addEventListener('canplay', handleCanPlay, { once: true });
+    preloadAudio.src = dubbedMixUrl;
+    preloadAudio.load();
+
+    return () => {
+      isCancelled = true;
+      preloadAudio.removeEventListener('canplay', handleCanPlay);
+      preloadAudio.src = '';
+    };
   }, [dubbedMixUrl]);
 
   // Real-time Volume & Mute updates (Direct HTML5 Audio + WebAudio Gain boost)

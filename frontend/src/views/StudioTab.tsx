@@ -196,7 +196,6 @@ export const StudioTab: React.FC = () => {
       const currentRatio = selectedSeg?.speed_ratio ?? selectedSeg?.current_speed_ratio;
       const res = await api.autoSplitSegment(currentProject, selectedSegmentId, currentRatio);
       setSegments(res.metadata);
-      setDubbedAudioVersion(Date.now());
       await loadWaveforms();
       if (res.info) {
         const { k_pauses, silence_added_per_pause_ms, silence_start_ms, silence_end_ms } = res.info;
@@ -220,7 +219,6 @@ export const StudioTab: React.FC = () => {
     try {
       const res = await api.autoSplitAllSegments(currentProject);
       setSegments(res.metadata);
-      setDubbedAudioVersion(Date.now());
       await loadWaveforms();
 
       if (res.processed_count > 0) {
