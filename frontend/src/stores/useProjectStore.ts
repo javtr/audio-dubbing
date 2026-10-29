@@ -22,14 +22,17 @@ interface ProjectState {
   liveStatusMessage: string;
   liveProgress: { current: number; total: number; percent: number } | null;
   isBatchGenerating: boolean;
+  isNewProjectModalOpen: boolean;
 
   // Actions
   setActiveTab: (tab: 'script' | 'dubbing' | 'studio') => void;
   setSelectedSegmentId: (id: string | null) => void;
   setLiveStatus: (msg: string) => void;
   setTranscript: (t: string) => void;
+  setIsNewProjectModalOpen: (open: boolean) => void;
   loadProjectsList: () => Promise<void>;
   selectProject: (name: string) => Promise<void>;
+  closeProject: () => void;
   setSegments: (segments: Segment[]) => void;
   updateSegment: (id: string | number, patch: Partial<Segment>) => void;
   saveCurrentMetadata: () => Promise<void>;
@@ -58,26 +61,45 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   liveStatusMessage: '',
   liveProgress: null,
   isBatchGenerating: false,
+  isNewProjectModalOpen: false,
 
   setActiveTab: (tab) => set({ activeTab: tab }),
   setSelectedSegmentId: (id) => set({ selectedSegmentId: id }),
   setLiveStatus: (msg) => set({ liveStatusMessage: msg }),
   setTranscript: (t) => set({ transcript: t }),
+  setIsNewProjectModalOpen: (open) => set({ isNewProjectModalOpen: open }),
 
   loadProjectsList: async () => {
     try {
       const list = await api.getProjects();
       set({ projectsList: list });
-      const current = get().currentProject;
-      if (!current && list.length > 0) {
-        await get().selectProject(list[0]);
-      }
+      // No cargar ningún proyecto automáticamente en el inicio para evitar demoras
     } catch (e) {
       console.error('Error loading projects list', e);
     }
   },
 
+  closeProject: () => {
+    set({
+      currentProject: null,
+      language: 'en',
+      paths: null,
+      audioDurationMs: 0,
+      segments: [],
+      validation: null,
+      transcript: '',
+      selectedSegmentId: null,
+      references: [],
+      liveStatusMessage: '',
+      liveProgress: null,
+    });
+  },
+
   selectProject: async (name: string) => {
+    if (!name) {
+      get().closeProject();
+      return;
+    }
     try {
       const detail = await api.getProjectDetail(name);
       set({

@@ -169,9 +169,9 @@ class AudioDubbingStudio(ctk.CTk):
             self._on_project_changed(target)
 
     def _load_initial_project(self):
+        # No cargar ningún proyecto automáticamente en el inicio
         projects = self.pm.list_projects()
-        if projects:
-            self._refresh_project_list(projects[0])
+        self.top_bar.update_project_list(projects, None)
 
     def _on_project_changed(self, project_name):
         if project_name == "(Sin proyectos)":

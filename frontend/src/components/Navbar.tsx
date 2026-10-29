@@ -12,13 +12,14 @@ export const Navbar: React.FC = () => {
     activeTab,
     isTTSConnected,
     ttsUrl,
+    isNewProjectModalOpen,
     setActiveTab,
     selectProject,
+    closeProject,
+    setIsNewProjectModalOpen,
     loadProjectsList,
     checkTTS,
   } = useProjectStore();
-
-  const [showNewModal, setShowNewModal] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [newMediaPath, setNewMediaPath] = useState('');
   const [newLang, setNewLang] = useState('en');
@@ -31,7 +32,7 @@ export const Navbar: React.FC = () => {
       await api.createProject(newProjectName.trim(), newMediaPath.trim(), newLang);
       await loadProjectsList();
       await selectProject(newProjectName.trim());
-      setShowNewModal(false);
+      setIsNewProjectModalOpen(false);
       setNewProjectName('');
       setNewMediaPath('');
     } catch (err: any) {
@@ -62,19 +63,34 @@ export const Navbar: React.FC = () => {
             <Folder className="w-4 h-4 text-neutral-400" />
             <select
               value={currentProject || ''}
-              onChange={(e) => selectProject(e.target.value)}
-              className="bg-transparent text-sm font-medium text-neutral-200 outline-none cursor-pointer max-w-[200px] truncate"
+              onChange={(e) => {
+                const val = e.target.value;
+                if (val === '__close__') {
+                  closeProject();
+                } else if (val) {
+                  selectProject(val);
+                }
+              }}
+              className="bg-transparent text-sm font-medium text-neutral-200 outline-none cursor-pointer max-w-[210px] truncate"
             >
+              <option value="" disabled className="bg-neutral-900 text-neutral-400">
+                Seleccionar proyecto...
+              </option>
               {projectsList.map((p) => (
                 <option key={p} value={p} className="bg-neutral-900 text-neutral-200">
                   {p}
                 </option>
               ))}
+              {currentProject && (
+                <option value="__close__" className="bg-neutral-900 text-rose-400 font-semibold">
+                  ✕ Cerrar proyecto
+                </option>
+              )}
             </select>
           </div>
 
           <button
-            onClick={() => setShowNewModal(true)}
+            onClick={() => setIsNewProjectModalOpen(true)}
             className="p-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white transition flex items-center gap-1 text-xs font-semibold px-2"
             title="Crear nuevo proyecto"
           >
@@ -119,9 +135,15 @@ export const Navbar: React.FC = () => {
 
         {/* Right: Language & Pinokio Status */}
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-neutral-800/80 border border-neutral-700/60 text-neutral-300">
-            <span>{language === 'pt' ? '🇧🇷 Portugués' : '🇺🇸 Inglés'}</span>
-          </div>
+          {currentProject ? (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-neutral-800/80 border border-neutral-700/60 text-neutral-300">
+              <span>{language === 'pt' ? '🇧🇷 Portugués' : '🇺🇸 Inglés'}</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-neutral-800/40 border border-neutral-700/40 text-neutral-500">
+              <span>Sin proyecto</span>
+            </div>
+          )}
 
           <button
             onClick={checkTTS}
@@ -139,7 +161,7 @@ export const Navbar: React.FC = () => {
       </div>
 
       {/* New Project Modal (Portaled to document.body to avoid header backdrop-blur positioning traps) */}
-      {showNewModal &&
+      {isNewProjectModalOpen &&
         createPortal(
           <div className="fixed inset-0 z-[9999] bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
             <div className="bg-neutral-900 border border-neutral-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 my-auto relative animate-in fade-in zoom-in-95 duration-150">
@@ -183,7 +205,7 @@ export const Navbar: React.FC = () => {
 
               <div className="flex items-center justify-end gap-2 pt-2">
                 <button
-                  onClick={() => setShowNewModal(false)}
+                  onClick={() => setIsNewProjectModalOpen(false)}
                   className="px-4 py-2 rounded-lg text-xs font-semibold text-neutral-400 hover:text-white transition"
                 >
                   Cancelar
