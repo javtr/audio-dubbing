@@ -152,10 +152,10 @@ export const Navbar: React.FC = () => {
                 ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
                 : 'bg-rose-500/10 border-rose-500/30 text-rose-400 hover:bg-rose-500/20'
             }`}
-            title={isTTSConnected ? `Pinokio TTS activo en ${ttsUrl}` : 'Pinokio no detectado en puerto 7860. Haz clic para reintentar.'}
+            title={isTTSConnected ? `Motor TTS activo: ${ttsUrl}` : 'Motor TTS no detectado en entorno local. Haz clic para reintentar.'}
           >
             <Radio className="w-3.5 h-3.5" />
-            <span>{isTTSConnected ? 'Pinokio OK' : 'Pinokio Off'}</span>
+            <span>{isTTSConnected ? 'Qwen3 TTS OK' : 'TTS Off'}</span>
           </button>
         </div>
       </div>

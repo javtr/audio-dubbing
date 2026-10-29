@@ -1,35 +1,50 @@
 import os
+import subprocess
 import shutil
-import urllib.request
-from gradio_client import Client, handle_file
 
-class PinokioClient:
-    def __init__(self, base_url="http://127.0.0.1:7860"):
-        self.base_url = base_url.rstrip("/")
-        self._client = None
+class DirectQwenClient:
+    """
+    Cliente de inferencia directa para Qwen3-TTS en subproceso de Python (.venv).
+    Elimina por completo la capa de red local HTTP/Gradio (Pinokio),
+    ejecutándose a máxima velocidad local y liberando VRAM tras cada inferencia (--unload-after).
+    """
 
-    def check_connection(self, timeout=2):
-        """Verifica si el servidor de Pinokio/Gradio está respondiendo."""
-        try:
-            req = urllib.request.Request(self.base_url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=timeout) as response:
-                return response.status in (200, 302, 404)
-        except Exception:
-            return False
+    def __init__(
+        self,
+        python_exe: str = r"F:\Desarrollo\Qwen3TTS\.venv\Scripts\python.exe",
+        engine_script: str = r"F:\Desarrollo\Qwen3TTS\src\infer_direct.py",
+        base_url: str = "Direct Qwen3-TTS (Local)"
+    ):
+        self.python_exe = python_exe
+        self.engine_script = engine_script
+        self.base_url = base_url
 
-    def _get_client(self):
-        if self._client is None:
-            self._client = Client(self.base_url)
-        return self._client
+    def check_connection(self, timeout: int = 2) -> bool:
+        """Verifica si el intérprete y el script de inferencia directa de Qwen3-TTS existen."""
+        return os.path.exists(self.python_exe) and os.path.exists(self.engine_script)
 
-    def generate_voice_clone(self, ref_audio_path, ref_text, target_text, output_path, language="English", model_size="1.7B"):
+    def generate_voice_clone(
+        self,
+        ref_audio_path: str,
+        ref_text: str,
+        target_text: str,
+        output_path: str,
+        language: str = "English",
+        model_size: str = "1.7B"
+    ) -> str:
         """
-        Envía la solicitud de clonación de voz a TTS vía Gradio en Pinokio.
-        Guarda el audio generado en output_path.
+        Invoca el motor de clonación de voz de Qwen3-TTS de forma directa en subproceso.
+        Asegura limpieza de VRAM previa y posterior.
         """
         if not os.path.exists(ref_audio_path):
             raise FileNotFoundError(f"Audio de referencia no encontrado: {ref_audio_path}")
 
+        if not self.check_connection():
+            raise RuntimeError(
+                f"No se encontró el ejecutable de Qwen3-TTS en '{self.python_exe}' o script en '{self.engine_script}'"
+            )
+
+        # Mapeo de idioma tolerante
         lang_map = {
             "en": "English",
             "english": "English",
@@ -40,22 +55,62 @@ class PinokioClient:
         }
         resolved_lang = lang_map.get(str(language).lower(), language)
 
-        client = self._get_client()
+        # Selección de modelo
+        model_name = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+        if "0.6" in str(model_size):
+            model_name = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
+        elif "custom" in str(model_size).lower():
+            model_name = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+        elif "/" in str(model_size):
+            model_name = model_size
 
-        result = client.predict(
-            ref_audio=handle_file(ref_audio_path),
-            ref_text=ref_text,
-            target_text=target_text,
-            language=resolved_lang,
-            use_xvector_only=False,
-            model_size=model_size,
-            max_chunk_chars=200,
-            chunk_gap=0.0,
-            seed=-1,
-            api_name="/generate_voice_clone"
+        # Liberación preventiva de caché CUDA en el proceso padre si torch está cargado
+        try:
+            import gc
+            import torch
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+        except Exception:
+            pass
+
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+        cmd = [
+            self.python_exe,
+            self.engine_script,
+            "--model", model_name,
+            "--prompt-audio", str(ref_audio_path),
+            "--prompt-text", str(ref_text),
+            "--text", str(target_text),
+            "--language", str(resolved_lang),
+            "--output", str(output_path),
+            "--unload-after"
+        ]
+
+        # Asegurar codificación UTF-8 en Windows para caracteres especiales y acentos
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env
         )
 
-        temp_audio_path = result[0]
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        shutil.move(temp_audio_path, output_path)
+        if result.returncode != 0:
+            err_msg = result.stderr.strip() if result.stderr else result.stdout.strip()
+            raise RuntimeError(f"Error en Qwen3-TTS: {err_msg}")
+
+        if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+            raise RuntimeError(f"Qwen3-TTS finalizó pero el archivo de salida no fue generado: {output_path}")
+
         return output_path
+
+
+# Alias para retrocompatibilidad total con código existente
+PinokioClient = DirectQwenClient

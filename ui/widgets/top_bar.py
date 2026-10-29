@@ -55,7 +55,7 @@ class TopBar(ctk.CTkFrame):
 
         self.lbl_pinokio = ctk.CTkLabel(
             pinokio_frame,
-            text="● Verificando Pinokio...",
+            text="● Verificando Qwen3-TTS...",
             text_color="#aaaaaa",
             font=("Arial", 12)
         )
@@ -90,9 +90,9 @@ class TopBar(ctk.CTkFrame):
 
     def set_pinokio_status(self, online):
         if online:
-            self.lbl_pinokio.configure(text="● Pinokio Online", text_color="#28a745")
+            self.lbl_pinokio.configure(text="● Qwen3-TTS Directo OK", text_color="#28a745")
         else:
-            self.lbl_pinokio.configure(text="● Pinokio Offline (127.0.0.1:7860)", text_color="#e57373")
+            self.lbl_pinokio.configure(text="● Qwen3-TTS No Encontrado", text_color="#e57373")
 
     def set_project_language(self, lang_code):
         if str(lang_code).lower() == "pt":

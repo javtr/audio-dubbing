@@ -75,7 +75,7 @@ export const DubbingTab: React.FC = () => {
             className="px-4 py-2 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition flex items-center gap-2 shadow-lg shadow-emerald-600/20 disabled:opacity-50"
           >
             <Rocket className="w-4 h-4" />
-            <span>Solicitar Todos a Pinokio</span>
+            <span>Solicitar Todos (Qwen3-TTS)</span>
           </button>
 
           <button

@@ -24,7 +24,7 @@ class TabDubbingView(ctk.CTkFrame):
 
         self.btn_run_all = ctk.CTkButton(
             top_frame,
-            text="🚀 Solicitar Todos a Pinokio",
+            text="🚀 Solicitar Todos (Qwen3-TTS)",
             font=("Arial", 14, "bold"),
             fg_color="#28a745",
             hover_color="#218838",
@@ -246,6 +246,10 @@ class TabDubbingView(ctk.CTkFrame):
             was_stopped = False
             generated_count = 0
 
+            # Asegurar descarga obligatoria de Whisper de VRAM antes de iniciar Qwen3-TTS
+            if hasattr(self.app, "aligner") and self.app.aligner:
+                self.app.aligner.unload_model()
+
             for i, seg in enumerate(target_segments):
                 if self.stop_requested.is_set():
                     was_stopped = True
@@ -295,6 +299,10 @@ class TabDubbingView(ctk.CTkFrame):
             pass
 
         pinokio_lang = "Portuguese" if lang == "pt" else "English"
+        # Asegurar descarga preventiva de Whisper de VRAM
+        if hasattr(self.app, "aligner") and self.app.aligner:
+            self.app.aligner.unload_model()
+
         self.app.pinokio.generate_voice_clone(
             ref_audio_path=ref_audio_path,
             ref_text=ref_text,
@@ -305,7 +313,7 @@ class TabDubbingView(ctk.CTkFrame):
         )
 
     def _on_dubbing_all_finished(self, was_stopped=False, count=0, total=0, mode="all"):
-        self.btn_run_all.configure(state="normal", text="🚀 Solicitar Todos a Pinokio")
+        self.btn_run_all.configure(state="normal", text="🚀 Solicitar Todos (Qwen3-TTS)")
         self.btn_stop_dubbing.configure(state="disabled", text="🛑 Detener")
         self.app.notify_audio_updated()
         self._update_progress_summary()

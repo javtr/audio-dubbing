@@ -22,7 +22,7 @@ from pydantic import BaseModel
 
 from core.project_manager import ProjectManager
 from core.whisper_aligner import WhisperAligner
-from core.pinokio_client import PinokioClient
+from core.pinokio_client import PinokioClient, DirectQwenClient
 from core.audio_processor import AudioProcessor, FastDubMixer
 from core.export_service import ExportService
 from core.timing_validator import TimingValidator
@@ -41,7 +41,7 @@ app.add_middleware(
 # Core singletons
 pm = ProjectManager(base_dir=str(PROJECT_ROOT))
 aligner = WhisperAligner()
-tts_client = PinokioClient(base_url="http://127.0.0.1:7860")
+tts_client = DirectQwenClient()
 
 # Global stop flag for batch TTS
 stop_tts_event = threading.Event()
@@ -770,6 +770,9 @@ def generate_single_tts(req: GenerateSingleTTSRequest):
 
     out_file = os.path.join(paths["audios_dir"], target_seg["filename"])
 
+    # Descarga obligatoria de Whisper de VRAM antes de ejecutar Qwen3-TTS (evita OOM en GPU 8GB)
+    aligner.unload_model()
+
     tts_client.generate_voice_clone(
         ref_audio_path=str(ref_wav),
         ref_text=ref_text,
@@ -837,6 +840,8 @@ def generate_batch_tts(req: GenerateBatchTTSRequest):
 
     def _worker():
         total = len(req.segment_ids)
+        # Descarga obligatoria de Whisper de VRAM antes de iniciar la síntesis por lotes
+        aligner.unload_model()
         for idx, seg_id in enumerate(req.segment_ids):
             if stop_tts_event.is_set():
                 ws_manager.broadcast_sync({
