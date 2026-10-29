@@ -71,7 +71,7 @@ export const ScriptTab: React.FC = () => {
       const res = await api.generateTranslationPrompt(currentProject);
       await navigator.clipboard.writeText(res.prompt);
       setBannerNotice(
-        `¡Prompt de traducción copiado (${res.segments_count} frases)! Con regla: palabras en inglés >= español y los 4 tonos (Conversacional, Explicatorio, Efusivo, Serio).`
+        `¡Prompt de traducción copiado (${res.segments_count} frases)! Con regla: palabras entre 100% y 120% del español (máx 120%) y los 4 tonos.`
       );
       setTimeout(() => setBannerNotice(null), 8000);
     } catch (err: any) {
